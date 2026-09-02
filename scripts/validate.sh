@@ -162,13 +162,13 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 4. Reference Application Verification
+# 4. Reference Workload Probe Semantics & Simulation Check
 # ------------------------------------------------------------------------------
-echo -e "\n4. Reference Workload Probe Semantics Check"
+echo -e "\n4. Reference Workload Probe Semantics & Simulation Check"
 if [ -f "examples/sample-api/app.py" ] && [ -n "$PYTHON_CMD" ]; then
   APP_TEST_OUT=$($PYTHON_CMD examples/sample-api/app.py --test-mode 2>&1)
   if [ $? -eq 0 ]; then
-    log_pass "sample-api probe endpoints verified (/startup, /ready, /health, /)"
+    log_pass "sample-api verified across all modes (normal, startup delay, unready, deadlock)"
   else
     log_fail "sample-api self-test failed: $APP_TEST_OUT"
   fi
@@ -177,9 +177,64 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 5. Kustomize Build Validation (Optional Tool Check)
+# 5. Static Kubernetes Manifest Composition & Integrity Check
 # ------------------------------------------------------------------------------
-echo -e "\n5. Kustomize Build Check (kubernetes/workloads/sample-api)"
+echo -e "\n5. Static Kubernetes Manifest Composition & Integrity Check"
+if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/sample-api" ]; then
+  MANIFEST_CHECK=$($PYTHON_CMD - << 'EOF'
+import os, sys
+
+workload_dir = "kubernetes/workloads/sample-api"
+files = ["namespace.yaml", "deployment.yaml", "service.yaml", "kustomization.yaml"]
+missing = [f for f in files if not os.path.isfile(os.path.join(workload_dir, f))]
+if missing:
+    print(f"Missing required manifest files: {missing}")
+    sys.exit(1)
+
+with open(os.path.join(workload_dir, "deployment.yaml"), "r", encoding="utf-8") as f:
+    dep_text = f.read()
+
+with open(os.path.join(workload_dir, "service.yaml"), "r", encoding="utf-8") as f:
+    svc_text = f.read()
+
+# Selector and label verification
+if "app.kubernetes.io/name: sample-api" not in dep_text:
+    print("Deployment missing expected app.kubernetes.io/name: sample-api label")
+    sys.exit(1)
+
+if "app.kubernetes.io/name: sample-api" not in svc_text:
+    print("Service missing expected app.kubernetes.io/name: sample-api selector")
+    sys.exit(1)
+
+# Probe paths verification
+for probe_path in ["/startup", "/ready", "/health"]:
+    if f"path: {probe_path}" not in dep_text:
+        print(f"Deployment missing expected probe path: {probe_path}")
+        sys.exit(1)
+
+# Security context verification
+for sec in ["runAsNonRoot: true", "readOnlyRootFilesystem: true", "allowPrivilegeEscalation: false"]:
+    if sec not in dep_text:
+        print(f"Deployment missing required securityContext setting: {sec}")
+        sys.exit(1)
+
+print("OK")
+sys.exit(0)
+EOF
+)
+  if [ $? -eq 0 ]; then
+    log_pass "Manifest composition, selectors, ports, and securityContext verified"
+  else
+    log_fail "Manifest integrity check failed: $MANIFEST_CHECK"
+  fi
+else
+  log_skip "Python or manifest directory unavailable"
+fi
+
+# ------------------------------------------------------------------------------
+# 6. Kustomize Build Validation (Optional Tool Check)
+# ------------------------------------------------------------------------------
+echo -e "\n6. Kustomize Build Check (kubernetes/workloads/sample-api)"
 if command -v kustomize >/dev/null 2>&1; then
   if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1; then
     log_pass "kustomize build succeeded for sample-api"
@@ -197,9 +252,9 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 6. Kubectl Client Dry-Run (Optional Tool Check)
+# 7. Kubectl Client Dry-Run (Optional Tool Check)
 # ------------------------------------------------------------------------------
-echo -e "\n6. Kubectl Client Dry-Run Check"
+echo -e "\n7. Kubectl Client Dry-Run Check"
 if command -v kubectl >/dev/null 2>&1; then
   if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1; then
     log_pass "kubectl apply --dry-run=client succeeded"
