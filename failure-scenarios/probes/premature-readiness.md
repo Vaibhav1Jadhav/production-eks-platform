@@ -11,7 +11,7 @@ Initialization remains incomplete
         ↓
 Incorrect readiness succeeds
         ↓
-Pod becomes traffic eligible (added to EndpointSlice)
+Pod becomes traffic eligible (endpoint marked ready in EndpointSlice)
         ↓
 Client requests arrive
         ↓
@@ -78,7 +78,7 @@ The readiness probe was either:
 2. **Checking a shallow endpoint** (such as a generic TCP socket check or a static `/` that returns HTTP 200 before dependent subsystems are initialized).
 3. **Checking an alias for liveness** rather than validating actual request-processing readiness.
 
-Because the readiness condition was evaluated as `True` prematurely, the Kubernetes EndpointSlice controller added the Pod IP to the Service's active endpoints before the application could process user transactions.
+Because the readiness condition was evaluated as `True` prematurely, the endpoint was marked ready in the EndpointSlice, allowing Service traffic to route to the Pod before the application could process user transactions.
 
 ---
 

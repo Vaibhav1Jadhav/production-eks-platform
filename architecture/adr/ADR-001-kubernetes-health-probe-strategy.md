@@ -34,12 +34,12 @@ We adopt **distinct, isolated semantics** for all three Kubernetes probe mechani
 2. **`readinessProbe` — Traffic Eligibility Boundary:**
    - **Target:** Dedicated `/ready` endpoint.
    - **Responsibility:** Determines whether this specific replica can successfully process incoming client traffic *right now*.
-   - **Behavior:** If readiness fails, the Kubernetes EndpointSlice controller temporarily removes the Pod IP from the Service's active backends. The container **is never restarted** as a result of readiness failure. Checks local saturation (e.g., worker pool availability, circuit breakers).
+   - **Behavior:** Readiness failure marks the corresponding endpoint as not ready (`ready: false`). Normal Kubernetes Service traffic does not select it as a ready backend. The container **is never restarted** as a result of readiness failure. Checks local saturation (e.g., worker pool availability, circuit breakers).
 
 3. **`livenessProbe` — Deadlock Recovery Boundary:**
    - **Target:** Dedicated `/health` endpoint.
    - **Responsibility:** Determines whether the process runtime has entered an unrecoverable state (e.g., deadlock, stuck thread pool, fatal internal invariant violation) where **killing and restarting the container is the only viable recovery mechanism**.
-   - **Constraint:** **Must never check external or downstream shared dependencies** (databases, third-party APIs, shared caches). Liveness evaluates only local process execution health.
+   - **Constraint:** **Liveness should generally avoid depending on shared downstream services whose failure cannot be repaired by restarting this container.** Coupling liveness to shared external dependencies (databases, third-party APIs, shared caches) risks triggering simultaneous container restarts across all replicas during a dependency outage, amplifying downtime into a cascading cluster failure. Liveness evaluates local process execution health.
 
 ---
 
@@ -57,7 +57,7 @@ We adopt **distinct, isolated semantics** for all three Kubernetes probe mechani
 ## Consequences
 
 ### Positive
-- **Zero-Downtime Deployments:** Pods join EndpointSlices only after their caches and listeners are genuinely ready.
+- **Safer Rolling Deployments:** New Pods become traffic-eligible only after readiness succeeds, reducing the risk of premature traffic during rollout (probes alone do not guarantee zero downtime, which also requires graceful termination and budget controls).
 - **Cascading Failure Protection:** Downstream database degradation causes pods to fail readiness (shedding load or serving degraded fallback) rather than triggering mass container restarts.
 - **Predictable Cold-Start Handling:** Heavy initialization does not require artificially inflating steady-state liveness probe timeouts.
 

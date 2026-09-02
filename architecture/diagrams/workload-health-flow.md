@@ -3,7 +3,10 @@
 This diagram illustrates the decoupling between the **Kubernetes Node Control Plane (Health Signals)** and the **Runtime Data Plane (User Traffic Path)**.
 
 A foundational reliability principle in Kubernetes is:
-$$\text{Container Running} \ne \text{Application Ready}$$
+
+$$
+\text{Container Running} \ne \text{Application Ready}
+$$
 
 ---
 
@@ -16,28 +19,28 @@ flowchart TD
         Client["External Client / Consumer"]
         Ingress["External traffic layer (implementation-dependent)\nIngress / Gateway API / Cloud Load Balancer"]
         K8sService["Kubernetes Service (ClusterIP)"]
-        EndpointSlice["EndpointSlice Controller\n(Filters by Pod Ready Condition)"]
+        ReadyBackend["Ready Backend Endpoints\n(Selected when ready == true)"]
         
         Client -->|"HTTP Request"| Ingress
         Ingress -->|"Route Match"| K8sService
-        K8sService -.->|"Queries Active Slices"| EndpointSlice
-        EndpointSlice -->|"Only forwards if\nReady == True"| PodContainer
+        K8sService -.->|"Routes traffic"| ReadyBackend
+        ReadyBackend -->|"Delivers to container"| PodContainer
     end
 
     subgraph CONTROL_PLANE["Node Control Plane (Kubelet Health Evaluation)"]
         direction TB
         Kubelet["Node Kubelet Agent"]
-        
+      
         subgraph PROBES["Probe Execution Boundary"]
             Startup["startupProbe (/startup)\nGuards cold start"]
             Readiness["readinessProbe (/ready)\nEvaluates serving capacity"]
             Liveness["livenessProbe (/health)\nEvaluates process responsiveness"]
         end
-        
+      
         Kubelet -->|"1. Polls until OK"| Startup
         Startup -->|"Once passed,\nactivates"| Readiness
         Startup -->|"Once passed,\nactivates"| Liveness
-        
+      
         Readiness -->|"Updates Condition:\nPodReady = True/False"| PodStatus["Pod Status / Conditions\n(Control Plane State)"]
         Liveness -->|"Failure Threshold Exceeded"| RestartAction["Trigger Container Restart\n(kills process via SIGTERM/SIGKILL)"]
     end
@@ -46,9 +49,9 @@ flowchart TD
         direction TB
         PodContainer["Pod Network & Container Namespace"]
         AppRuntime["Application Process (sample-api)\nRunning in Container"]
-        
+      
         PodContainer --> AppRuntime
-        PodStatus -.->|"Synchronizes state to API Server"| EndpointSlice
+        PodStatus -.->|"Synchronizes ready condition"| ReadyBackend
         RestartAction -.->|"Re-executes container"| PodContainer
     end
 
@@ -64,7 +67,7 @@ flowchart TD
     classDef alert fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#fef2f2;
 
     class Kubelet,Startup,Readiness,Liveness,PodStatus control;
-    class Client,Ingress,K8sService,EndpointSlice data;
+    class Client,Ingress,K8sService,ReadyBackend data;
     class PodContainer,AppRuntime workload;
     class RestartAction alert;
 ```
@@ -74,15 +77,17 @@ flowchart TD
 ## Architectural Distinctions
 
 ### 1. Control Plane Signal vs. Runtime Request Path
+
 - **Kubelet is completely isolated from user traffic.** The kubelet acts strictly as an administrative node agent executing health probes on configured intervals via loopback or container network interfaces.
-- **The Data Plane relies on EndpointSlice readiness.** Ingress, load balancers, and kube-proxy/eBPF routing rules only forward client traffic to Pod IPs that have the condition `Ready = True`.
+- **The Data Plane relies on endpoint readiness.** Kubernetes Services normally forward client traffic only to backends where endpoint readiness is `true`, while exact forwarding mechanics depend on the underlying data-plane implementation.
 
 ### 2. Failure Domain Isolation
+
 | Failure Condition | Evaluated By | Action Taken | Traffic Impact | Container Impact |
 | :--- | :--- | :--- | :--- | :--- |
-| **Cold start / cache warm-up** | `startupProbe` | Holds off liveness and readiness evaluation | Pod is not yet in EndpointSlice; no traffic received | Process continues initializing undisturbed |
-| **Downstream DB outage / Queue full** | `readinessProbe` | Sets `PodReady = False` | Removed from EndpointSlice; 0 incoming requests | **No restart**; preserves memory & prevents restart storm |
-| **Application deadlock / fatal hang** | `livenessProbe` | Emits `Unhealthy` event to kubelet | Removed from endpoints during restart | Kubelet terminates and restarts container |
+| **Cold start / cache warm-up** | `startupProbe` | Holds off liveness and readiness evaluation | Endpoint marked not ready; no traffic received | Process continues initializing undisturbed |
+| **Downstream DB outage / Queue full** | `readinessProbe` | Sets `PodReady = False` | Endpoint marked not ready; traffic bypassed | **No restart**; preserves memory & prevents restart storm |
+| **Application deadlock / fatal hang** | `livenessProbe` | Emits `Unhealthy` event to kubelet | Bypassed during container restart | Kubelet terminates and restarts container |
 
 > [!NOTE]
-> Specific data plane components (Ingress controllers, AWS ALB Controller, Cilium eBPF, kube-proxy, Service Meshes) route traffic using different lower-level mechanics, but all standard implementations honor the Kubernetes `PodReady` condition synchronized via the EndpointSlice API.
+> Kubernetes Services normally use endpoint readiness when determining traffic-eligible backends; exact forwarding behavior depends on the networking/data-plane implementation (e.g., Ingress controllers, AWS Load Balancer Controller, Cilium eBPF, kube-proxy, or service meshes).

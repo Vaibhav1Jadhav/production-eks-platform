@@ -52,8 +52,8 @@ Our platform design establishes a clean boundary between node-level control plan
 
 ### 1. Workload Health Strategy & Probe Architecture
 - **Startup Protection (`startupProbe`):** Guards slow application warm-ups and cache populating without inflating liveness timeouts or triggering crash loops.
-- **Traffic Isolation (`readinessProbe`):** Decouples client traffic eligibility from container restarts via EndpointSlice synchronization.
-- **Deadlock Recovery (`livenessProbe`):** Restricts container restarts to fatal internal hangs while strictly decoupling from downstream shared dependencies (preventing cascading restart storms).
+- **Traffic Isolation (`readinessProbe`):** Decouples client traffic eligibility from container restarts. Readiness failure marks the corresponding endpoint as not ready (`ready: false`), ensuring normal Kubernetes Service traffic does not select it as a ready backend.
+- **Deadlock Recovery (`livenessProbe`):** Restricts container restarts to fatal internal hangs. Liveness should generally avoid depending on shared downstream services whose failure cannot be repaired by restarting this container, preventing restart storms that amplify outages.
 - **Reproducible Reference Workload:** Minimal, zero-dependency Python service exposing dedicated `/startup`, `/ready`, `/health`, and traffic endpoints with controllable failure injection flags in [`examples/sample-api/`](examples/sample-api/).
 - **Production Kubernetes Manifests:** Declarative workload definition configured with Pod Security Standards (`restricted`), non-root user, dropped capabilities, and read-only root filesystem in [`kubernetes/workloads/sample-api/`](kubernetes/workloads/sample-api/).
 

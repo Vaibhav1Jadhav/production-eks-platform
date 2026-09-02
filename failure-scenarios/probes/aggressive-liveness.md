@@ -107,7 +107,7 @@ kubectl patch deployment sample-api -n sample-workloads --type='json' \
 There are **no universal magic values** for probe timings; values depend directly on application architecture, garbage collection characteristics, and initialization profiles. However, production designs must adhere to the following principles:
 
 1. **Decouple Liveness from Downstream Health:**
-   The `/health` endpoint must evaluate internal process state only (is the event loop ticking? are background consumer threads running?). Never query a database or external cache in a liveness probe.
+   Liveness should generally avoid depending on shared downstream services whose failure cannot be repaired by restarting this container. Coupling liveness to a shared database or external cache turns a transient dependency blip into an outage amplifier by restarting all application replicas concurrently.
 
 2. **Absorb Startup with `startupProbe`:**
    Do not inflate `initialDelaySeconds` on liveness to accommodate worst-case cold starts. Use a `startupProbe` with a high `failureThreshold` (e.g., 30 checks every 2s = 60s window). This gives slow-starting pods headroom without sacrificing fast detection of deadlocks in steady state.
@@ -119,4 +119,4 @@ There are **no universal magic values** for probe timings; values depend directl
    - `failureThreshold`: 3 or more consecutive failures (so a single transient timeout does not trigger a restart).
 
 4. **Use `readinessProbe` for Traffic Shedding:**
-   If a container is overloaded, let `readinessProbe` fail to remove it from the Service endpoint list. The container stops receiving new requests, cools down, finishes its current backlog, and becomes ready again—**without losing its cache or restarting PID 1**.
+   If a container is overloaded, let `readinessProbe` fail so the endpoint is marked not ready (`ready: false`). Normal Service traffic will not select it as a ready backend, allowing the container to cool down, finish its backlog, and become ready again—**without losing its in-memory state or restarting PID 1**.

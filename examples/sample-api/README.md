@@ -11,7 +11,7 @@ This application exists **solely to make probe behavior reproducible**. It provi
 | Endpoint | Probe Type | Semantic Question | Failure Consequence in Kubernetes |
 | :--- | :--- | :--- | :--- |
 | `/startup` | `startupProbe` | *"Has initialization / cache loading completed?"* | Disables liveness checks until passed. If threshold exceeded, kubelet restarts the container. |
-| `/ready` | `readinessProbe` | *"Should this instance receive traffic right now?"* | EndpointSlice controller removes the Pod IP from Service endpoints. Pod remains running; **no restart**. |
+| `/ready` | `readinessProbe` | *"Should this instance receive traffic right now?"* | Marks the corresponding endpoint as not ready (`ready: false`). Normal Kubernetes Service traffic does not select it as a ready backend. Pod remains running; **no restart**. |
 | `/health` | `livenessProbe` | *"Is the process alive enough that restarting will fix it?"* | Kubelet terminates the container and restarts it according to the `restartPolicy`. |
 | `/` | Application Traffic | *"Standard API request payload"* | Returns `200 OK` when ready; returns `503 Service Unavailable` if hit while unready. |
 

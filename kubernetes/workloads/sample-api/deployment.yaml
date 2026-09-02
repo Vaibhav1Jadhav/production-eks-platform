@@ -80,8 +80,8 @@ spec:
 
           # --------------------------------------------------------------------
           # 2. READINESS PROBE
-          # Determines traffic eligibility (participating in Service EndpointSlice).
-          # Failure stops new traffic from arriving without restarting the container.
+          # Determines traffic eligibility. Readiness failure marks the endpoint
+          # not ready, stopping new traffic without restarting the container.
           # --------------------------------------------------------------------
           readinessProbe:
             httpGet:
@@ -96,8 +96,8 @@ spec:
           # --------------------------------------------------------------------
           # 3. LIVENESS PROBE
           # Detects deadlocks and fatal hangs where process restart is the only
-          # corrective action. Does NOT check external dependencies (DB/cache) to
-          # prevent cascading restart storms across the entire replica set.
+          # corrective action. Avoids depending on shared downstream services
+          # whose failure cannot be repaired by restarting this container.
           # --------------------------------------------------------------------
           livenessProbe:
             httpGet:

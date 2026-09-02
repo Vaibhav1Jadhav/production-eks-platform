@@ -50,7 +50,7 @@ Downstream Dependencies (Databases, caches, third-party APIs)
 ---
 
 ### Step 2: Inspect Kubernetes Service & EndpointSlice Registration
-- **Hypothesis:** The Service selector does not match pod labels, or the EndpointSlice controller has excluded the pods because they are marked unready.
+- **Hypothesis:** The Service selector does not match pod labels, or endpoints are marked not ready in the EndpointSlice due to readiness probe failure.
 - **Command / Evidence:**
   ```bash
   # Check Service definition and selector
@@ -136,7 +136,7 @@ RESTARTS:.status.containerStatuses[0].restartCount
 - **Action:**
   1. Do NOT kill the application pods. Mass container restarts will not resolve an external database or network outage.
   2. Verify downstream dependency health (database connection limits, network policies, IAM permissions).
-  3. Once the dependency recovers, the application's `/ready` probe will automatically return `200 OK`, and the EndpointSlice controller will restore the pod IPs into service with zero manual intervention.
+  3. Once the dependency recovers, the application's `/ready` probe will automatically return `200 OK`, the endpoint will be marked ready in the EndpointSlice, and Service traffic will resume routing to the pod with zero manual intervention.
 
 ### Scenario 2: Rollout Introduced Premature Readiness (5xx During Deployment)
 - **Action:**
