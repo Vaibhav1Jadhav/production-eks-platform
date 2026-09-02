@@ -14,7 +14,7 @@ flowchart TD
     subgraph DATA_PLANE["Runtime Data Plane (User Request Path)"]
         direction TB
         Client["External Client / Consumer"]
-        Ingress["Ingress / Gateway / Load Balancer\n(Implementation-specific)"]
+        Ingress["External traffic layer (implementation-dependent)\nIngress / Gateway API / Cloud Load Balancer"]
         K8sService["Kubernetes Service (ClusterIP)"]
         EndpointSlice["EndpointSlice Controller\n(Filters by Pod Ready Condition)"]
         

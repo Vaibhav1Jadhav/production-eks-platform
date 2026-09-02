@@ -71,7 +71,7 @@ Our platform design establishes a clean boundary between node-level control plan
 - **[Scenario A: Premature Readiness (Running ≠ Ready)](failure-scenarios/probes/premature-readiness.md)**  
   Deep-dive into how a pod in the `Running` phase causes HTTP 5xx errors for end users when readiness is evaluated prematurely during rollouts or scaling.
 - **[Scenario B: Aggressive Liveness as an Outage Amplifier](failure-scenarios/probes/aggressive-liveness.md)**  
-  Analysis of how tight liveness timeouts convert transient downstream latency spikes into a cluster-wide restart storm and cascading outage.
+  Analysis of how aggressive liveness checks can turn transient local slowdowns, startup delays, or incorrectly coupled dependency failures into repeated restarts and reduced availability.
 
 ---
 

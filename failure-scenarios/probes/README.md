@@ -12,4 +12,4 @@ $$\text{SYMPTOM} \longrightarrow \text{FAILURE DOMAIN} \longrightarrow \text{EVI
 - **[Scenario A: Premature Readiness (`Running \ne Ready`)](premature-readiness.md)**  
   *How a Pod in `Running` state triggers user-facing HTTP 5xx errors during rollouts due to misconfigured readiness signals.*
 - **[Scenario B: Aggressive Liveness as an Outage Amplifier](aggressive-liveness.md)**  
-  *How aggressive liveness probe timeouts convert a temporary downstream latency spike into a cascading container restart storm.*
+  *How aggressive liveness checks turn transient local slowdowns, startup delays, or incorrectly coupled dependency failures into repeated restarts and reduced availability.*
