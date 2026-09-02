@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-api
+  namespace: sample-workloads
+  labels:
+    app.kubernetes.io/name: sample-api
+    app.kubernetes.io/instance: sample-api-reference
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: production-eks-platform
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sample-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sample-api
+        app.kubernetes.io/instance: sample-api-reference
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: production-eks-platform
+        app.kubernetes.io/version: "1.0.0"
+    spec:
+      # Pod-level security context enforcing non-root execution and default seccomp profile
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: sample-api
+          # Generic lightweight image reference; when running in local clusters (kind/minikube),
+          # build and load the local image or use the reference image.
+          image: sample-api:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # Container-level security context restricting privilege escalation and root FS writes
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Resource sizing for this reference implementation.
+          # NOTE: These values are calibrated specifically for this minimal Python service
+          # and must not be copied as universal production sizing guidelines.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+          # --------------------------------------------------------------------
+          # 1. STARTUP PROBE
+          # Protects slow-starting processes (cache warming, DB migrations, etc.)
+          # Disables liveness and readiness checks until this probe succeeds.
+          # 30 failures * 2s period = up to 60s startup window.
+          # --------------------------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: /startup
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+
+          # --------------------------------------------------------------------
+          # 2. READINESS PROBE
+          # Determines traffic eligibility (participating in Service EndpointSlice).
+          # Failure stops new traffic from arriving without restarting the container.
+          # --------------------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 2
+
+          # --------------------------------------------------------------------
+          # 3. LIVENESS PROBE
+          # Detects deadlocks and fatal hangs where process restart is the only
+          # corrective action. Does NOT check external dependencies (DB/cache) to
+          # prevent cascading restart storms across the entire replica set.
+          # --------------------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          env:
+            - name: PORT
+              value: "8080"
+            # Demonstration controls (set to values > 0 or true to reproduce failure modes)
+            - name: STARTUP_DELAY_SECONDS
+              value: "0"
+            - name: SIMULATE_UNREADY
+              value: "false"
+            - name: SIMULATE_LIVENESS_FAILURE
+              value: "false"
