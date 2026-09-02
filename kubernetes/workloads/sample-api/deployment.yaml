@@ -111,6 +111,10 @@ spec:
           env:
             - name: PORT
               value: "8080"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
             # Demonstration controls (set to values > 0 or true to reproduce failure modes)
             - name: STARTUP_DELAY_SECONDS
               value: "0"

@@ -3,8 +3,10 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-# Ensure Python output is sent straight to terminal (container logs) without buffering
+# Ensure Python output is unbuffered and prevents writing bytecode files (.pyc)
+# to maintain compatibility with read-only root filesystems
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080
 
 # Create unprivileged application user

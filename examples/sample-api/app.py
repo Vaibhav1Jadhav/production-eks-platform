@@ -162,7 +162,9 @@ def run_server():
 
 
 def run_self_test():
-    """Execute automated self-test verification to ensure correct endpoint semantics."""
+    """Execute automated self-test verification covering normal and failure simulation semantics."""
+    global STARTUP_DELAY_SECONDS, SIMULATE_UNREADY, SIMULATE_LIVENESS_FAILURE
+
     print("Running automated probe semantics self-test...")
     server = http.server.HTTPServer(("127.0.0.1", 18080), HealthProbeHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -170,18 +172,62 @@ def run_self_test():
     time.sleep(0.1)
 
     base = "http://127.0.0.1:18080"
-    endpoints = ["/startup", "/ready", "/health", "/"]
 
-    for ep in endpoints:
-        req = urllib.request.Request(f"{base}{ep}")
-        with urllib.request.urlopen(req) as resp:
-            status = resp.getcode()
-            body = json.loads(resp.read().decode("utf-8"))
-            print(f"  PASS: GET {ep} returned {status} -> {body.get('status') or body.get('message')}")
-            assert status == 200, f"Expected 200 on {ep}, got {status}"
+    def query(path):
+        req = urllib.request.Request(f"{base}{path}")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.getcode(), json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode("utf-8"))
 
-    server.shutdown()
-    print("All self-test probe checks passed successfully.")
+    try:
+        # 1. Baseline Ready Operation
+        print("  [Test 1/4] Baseline Ready State:")
+        for ep in ["/startup", "/ready", "/health", "/"]:
+            code, body = query(ep)
+            assert code == 200, f"Expected 200 for {ep}, got {code}"
+            print(f"    PASS: GET {ep} -> {code} ({body.get('status') or body.get('message')})")
+
+        # 2. Startup Delay Simulation
+        print("  [Test 2/4] Startup Delay Simulation:")
+        STARTUP_DELAY_SECONDS = 9999.0
+        code, _ = query("/startup")
+        assert code == 503, f"Expected 503 on /startup during delay, got {code}"
+        code, _ = query("/ready")
+        assert code == 503, f"Expected 503 on /ready during startup delay, got {code}"
+        code, _ = query("/health")
+        assert code == 200, f"Expected 200 on /health during startup delay, got {code}"
+        code, _ = query("/")
+        assert code == 503, f"Expected 503 on / during startup delay, got {code}"
+        print("    PASS: /startup=503, /ready=503, /health=200, /=503 verified during slow startup")
+        STARTUP_DELAY_SECONDS = 0.0
+
+        # 3. Transient Unreadiness Simulation (Traffic Shedding / Downstream degradation)
+        print("  [Test 3/4] Transient Unreadiness Simulation:")
+        SIMULATE_UNREADY = True
+        code, _ = query("/startup")
+        assert code == 200, f"Expected 200 on /startup, got {code}"
+        code, body = query("/ready")
+        assert code == 503 and body.get("reason") == "simulated_degradation", f"Expected 503 on /ready, got {code}"
+        code, _ = query("/health")
+        assert code == 200, f"Expected 200 on /health (process alive), got {code}"
+        code, _ = query("/")
+        assert code == 503, f"Expected 503 on / while unready, got {code}"
+        print("    PASS: /ready=503 while /health=200 (traffic shed, no restart triggered)")
+        SIMULATE_UNREADY = False
+
+        # 4. Liveness Deadlock Failure Simulation
+        print("  [Test 4/4] Liveness Deadlock Failure Simulation:")
+        SIMULATE_LIVENESS_FAILURE = True
+        code, body = query("/health")
+        assert code == 500 and body.get("status") == "DEADLOCK_OR_FATAL", f"Expected 500 on /health, got {code}"
+        print("    PASS: /health=500 (correctly signals restart recovery action)")
+        SIMULATE_LIVENESS_FAILURE = False
+
+        print("All probe semantics and failure simulation tests passed successfully.")
+    finally:
+        server.shutdown()
 
 
 if __name__ == "__main__":
@@ -189,3 +235,4 @@ if __name__ == "__main__":
         run_self_test()
     else:
         run_server()
+
