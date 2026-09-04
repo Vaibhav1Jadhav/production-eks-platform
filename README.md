@@ -41,10 +41,12 @@ Each capability added to this repository reflects a practical production problem
 
 ## Architecture
 
-Our platform design establishes a clean boundary between node-level control plane health signals and runtime client request data paths:
+Our platform design establishes clean boundaries between node-level control plane health signals, runtime client request data paths, and planned infrastructure maintenance:
 
 - **[Workload Health & Traffic Flow Architecture](architecture/diagrams/workload-health-flow.md)**: Visualizes how `kubelet` evaluates container lifecycle vs. how `Ingress`, `Service`, and `EndpointSlices` route user traffic. Demonstrates the foundational principle:
   $$\text{Container Running} \ne \text{Application Ready}$$
+- **[Planned Disruption Flow & Eviction Architecture](architecture/diagrams/planned-disruption-flow.md)**: Visualizes how the Kubernetes Eviction API interacts with `PodDisruptionBudget` during planned node maintenance (`kubectl drain`), separating policy-aware eviction from direct deletion and Deployment rolling updates. Demonstrates the reliability principle:
+  $$\text{PodDisruptionBudget} \ne \text{Application High Availability}$$
 
 ---
 
@@ -57,21 +59,37 @@ Our platform design establishes a clean boundary between node-level control plan
 - **Reproducible Reference Workload:** Minimal, zero-dependency Python service exposing dedicated `/startup`, `/ready`, `/health`, and traffic endpoints with controllable failure injection flags in [`examples/sample-api/`](examples/sample-api/).
 - **Production Kubernetes Manifests:** Declarative workload definition configured with Pod Security Standards (`restricted`), non-root user, dropped capabilities, and read-only root filesystem in [`kubernetes/workloads/sample-api/`](kubernetes/workloads/sample-api/).
 
+### 2. Planned Disruption Management & PodDisruptionBudget Strategy
+- **Calibrated Disruption Budget (`minAvailable: 2`):** Guarantees a minimum serving floor during voluntary maintenance. On our 3-replica tier, permits exactly 1 eviction at a time while 2 ready replicas remain online to absorb user traffic.
+- **Eviction API Policy Boundary:** Enforces that voluntary disruptions (`kubectl drain`, node consolidation) respect workload capacity, while explicitly documenting that involuntary crashes and Deployment rollouts are not constrained by PDBs.
+- **Unhealthy Pod Eviction Policy (`AlwaysAllow`):** Adopts Kubernetes v1.31+ stable policy allowing unhealthy/unready pods to be evicted during maintenance, preventing faulty applications from permanently trapping worker node OS and kernel patching.
+- **Hands-On Controlled Lab:** Step-by-step reproducible experiment on a disposable cluster demonstrating eviction pacing, probe warm-up, and over-restrictive budget deadlocks in [`failure-scenarios/disruptions/node-drain-lab.md`](failure-scenarios/disruptions/node-drain-lab.md).
+- **Production Manifest:** Configured in [`kubernetes/workloads/sample-api/poddisruptionbudget.yaml`](kubernetes/workloads/sample-api/poddisruptionbudget.yaml).
+
 ---
 
 ## Architecture Decision Records (ADR)
 
 - **[ADR-001: Kubernetes Health Probe Strategy](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md)**  
   Documents the decision to establish distinct, isolated semantics for startup, readiness, and liveness probes, alternatives evaluated (unified `/health`, downstream coupling, readiness only), and engineering trade-offs.
+- **[ADR-002: PodDisruptionBudget Strategy](architecture/adr/ADR-002-pod-disruption-budget-strategy.md)**  
+  Evaluates mathematical trade-offs for voluntary disruption thresholds (`minAvailable: 2` vs `minAvailable: 1` vs `100%`), unhealthy eviction policies (`AlwaysAllow` vs `IfHealthyBudget`), and failure boundaries.
 
 ---
 
 ## Failure Scenarios
 
+### Workload Probes (Milestone #21)
 - **[Scenario A: Premature Readiness (Running ≠ Ready)](failure-scenarios/probes/premature-readiness.md)**  
   Deep-dive into how a pod in the `Running` phase causes HTTP 5xx errors for end users when readiness is evaluated prematurely during rollouts or scaling.
 - **[Scenario B: Aggressive Liveness as an Outage Amplifier](failure-scenarios/probes/aggressive-liveness.md)**  
   Analysis of how aggressive liveness checks can turn transient local slowdowns, startup delays, or incorrectly coupled dependency failures into repeated restarts and reduced availability.
+
+### Planned Disruptions (Milestone #22)
+- **[Disruption Scenarios & Hands-On Lab](failure-scenarios/disruptions/README.md)**:
+  - **[Scenario A: Unprotected Node Drain](failure-scenarios/disruptions/unprotected-node-drain.md)**: Demonstrates how draining nodes without a PDB causes rapid simultaneous terminations, endpoint depletion, and request timeouts.
+  - **[Scenario B: Over-Restrictive PDB](failure-scenarios/disruptions/over-restrictive-pdb.md)**: Explores how setting `minAvailable == replicas` drops `disruptionsAllowed` to 0, causing Eviction API HTTP 429 rejections and freezing infrastructure upgrades.
+  - **[Hands-On Lab: Can This Workload Survive a Node Drain?](failure-scenarios/disruptions/node-drain-lab.md)**: Controlled node drain testing procedure on a disposable cluster.
 
 ---
 
@@ -80,6 +98,9 @@ Our platform design establishes a clean boundary between node-level control plan
 - **[Runbook: Pod Running but Users Receive 5xx](runbooks/pod-running-but-5xx.md)**  
   Hypothesis-driven, outside-in diagnostic workflow:
   $$\text{Client} \longrightarrow \text{Gateway} \longrightarrow \text{Service} \longrightarrow \text{EndpointSlice} \longrightarrow \text{Pod Readiness} \longrightarrow \text{Probes} \longrightarrow \text{Application}$$
+- **[Runbook: Planned Node Disruption & Stuck Node Drain Investigation](runbooks/planned-node-disruption.md)**  
+  Outside-in diagnostic procedure for isolating blocked node drains:
+  $$\text{Node Drain} \longrightarrow \text{Eviction Denial} \longrightarrow \text{PDB Status} \longrightarrow \text{Replica Readiness} \longrightarrow \text{Scheduling Capacity} \longrightarrow \text{Safe Recovery}$$
 
 ---
 
@@ -90,6 +111,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 | Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | [**#21**](https://lnkd.in/p/dWUXSe5t) | [Kubernetes Probes — Running ≠ Ready](https://lnkd.in/p/dWUXSe5t) | *"Your Pod Is Running. Why Are Users Still Getting 5xx?"* | **Implementation available** | [Workload Manifests](kubernetes/workloads/sample-api/) • [ADR-001](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md) • [Runbook](runbooks/pod-running-but-5xx.md) • [Failure Scenarios](failure-scenarios/probes/) |
+| **#22** | PodDisruptionBudget — Surviving Planned Disruption | *"Can This Workload Survive a Node Drain?"* | **Implementation available** *(Pending publication)* | [PDB Manifest](kubernetes/workloads/sample-api/poddisruptionbudget.yaml) • [ADR-002](architecture/adr/ADR-002-pod-disruption-budget-strategy.md) • [Planned Disruption Flow](architecture/diagrams/planned-disruption-flow.md) • [Node Drain Lab](failure-scenarios/disruptions/node-drain-lab.md) • [Runbook](runbooks/planned-node-disruption.md) • [Failure Scenarios](failure-scenarios/disruptions/) |
 
 ---
 
