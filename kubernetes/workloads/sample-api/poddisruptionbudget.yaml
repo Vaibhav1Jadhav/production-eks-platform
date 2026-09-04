@@ -1,0 +1,41 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sample-api
+  namespace: sample-workloads
+  labels:
+    app.kubernetes.io/name: sample-api
+    app.kubernetes.io/instance: sample-api-reference
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: production-eks-platform
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  # Minimum number of Pods that must remain available during voluntary disruptions
+  # (e.g., kubectl drain, cluster autoscaler scale-down, Eviction API requests).
+  #
+  # Arithmetic for this reference workload:
+  #   - Desired Replicas: 3
+  #   - Minimum Available: 2
+  #   - Maximum Simultaneous Voluntary Disruptions Allowed: 1 (when all 3 pods are Ready)
+  #
+  # NOTE: disruptionsAllowed is dynamic and evaluated at runtime by the Eviction API.
+  # If a replica becomes NotReady or crashes, disruptionsAllowed drops to 0, blocking further voluntary evictions.
+  minAvailable: 2
+
+  # Unhealthy Pod Eviction Policy:
+  # Controls how the Eviction API treats unhealthy (NotReady or Pending) Pods during voluntary evictions.
+  # Stable in Kubernetes v1.31+.
+  #
+  # Selected: AlwaysAllow
+  #   Rationale: Faulty or misbehaving pods (e.g., stuck in crash loop or failing readiness)
+  #   do not permanently deadlock planned infrastructure maintenance or node drain operations.
+  #   Trade-off: An unhealthy running pod can be evicted even when healthy running capacity
+  #   is already below desired minAvailable.
+  #
+  # Alternative: IfHealthyBudget
+  #   Only permits eviction of unhealthy pods if the disruption budget currently allows it.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sample-api

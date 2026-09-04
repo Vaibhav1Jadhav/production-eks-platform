@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/part-of: production-eks-platform
     app.kubernetes.io/version: "1.0.0"
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: sample-api
