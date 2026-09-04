@@ -89,13 +89,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 
 | Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| **#21** | Kubernetes Probes: Running ≠ Ready | *"Your Pod Is Running. Why Are Users Still Getting 5xx?"* | **Implementation available** | [Workload Manifests](kubernetes/workloads/sample-api/) • [ADR-001](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md) • [Runbook](runbooks/pod-running-but-5xx.md) • [Failure Scenarios](failure-scenarios/probes/) |
-
-<!-- 
-NOTE FOR MAINTAINERS:
-When LinkedIn post #21 is published, update the table above with the direct publication link.
-Format: [#21 — Kubernetes Probes: Running ≠ Ready](https://www.linkedin.com/posts/<post-id>)
--->
+| [**#21**](https://lnkd.in/p/dWUXSe5t) | [Kubernetes Probes — Running ≠ Ready](https://lnkd.in/p/dWUXSe5t) | *"Your Pod Is Running. Why Are Users Still Getting 5xx?"* | **Implementation available** | [Workload Manifests](kubernetes/workloads/sample-api/) • [ADR-001](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md) • [Runbook](runbooks/pod-running-but-5xx.md) • [Failure Scenarios](failure-scenarios/probes/) |
 
 ---
 
