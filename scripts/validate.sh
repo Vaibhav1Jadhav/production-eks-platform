@@ -182,10 +182,10 @@ fi
 echo -e "\n5. Static Kubernetes Manifest Composition & Integrity Check"
 if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/sample-api" ]; then
   MANIFEST_CHECK=$($PYTHON_CMD - << 'EOF'
-import os, sys
+import os, re, sys
 
 workload_dir = "kubernetes/workloads/sample-api"
-files = ["namespace.yaml", "deployment.yaml", "service.yaml", "kustomization.yaml"]
+files = ["namespace.yaml", "deployment.yaml", "service.yaml", "poddisruptionbudget.yaml", "kustomization.yaml"]
 missing = [f for f in files if not os.path.isfile(os.path.join(workload_dir, f))]
 if missing:
     print(f"Missing required manifest files: {missing}")
@@ -197,7 +197,13 @@ with open(os.path.join(workload_dir, "deployment.yaml"), "r", encoding="utf-8") 
 with open(os.path.join(workload_dir, "service.yaml"), "r", encoding="utf-8") as f:
     svc_text = f.read()
 
-# Selector and label verification
+with open(os.path.join(workload_dir, "poddisruptionbudget.yaml"), "r", encoding="utf-8") as f:
+    pdb_text = f.read()
+
+with open(os.path.join(workload_dir, "kustomization.yaml"), "r", encoding="utf-8") as f:
+    kust_text = f.read()
+
+# 1. Selector and label verification
 if "app.kubernetes.io/name: sample-api" not in dep_text:
     print("Deployment missing expected app.kubernetes.io/name: sample-api label")
     sys.exit(1)
@@ -206,24 +212,70 @@ if "app.kubernetes.io/name: sample-api" not in svc_text:
     print("Service missing expected app.kubernetes.io/name: sample-api selector")
     sys.exit(1)
 
-# Probe paths verification
+if "app.kubernetes.io/name: sample-api" not in pdb_text:
+    print("PDB missing expected app.kubernetes.io/name: sample-api selector")
+    sys.exit(1)
+
+# 2. Probe paths verification
 for probe_path in ["/startup", "/ready", "/health"]:
     if f"path: {probe_path}" not in dep_text:
         print(f"Deployment missing expected probe path: {probe_path}")
         sys.exit(1)
 
-# Security context verification
+# 3. Security context verification
 for sec in ["runAsNonRoot: true", "readOnlyRootFilesystem: true", "allowPrivilegeEscalation: false"]:
     if sec not in dep_text:
         print(f"Deployment missing required securityContext setting: {sec}")
         sys.exit(1)
+
+# 4. Workload replica count verification
+rep_match = re.search(r'replicas:\s*(\d+)', dep_text)
+if not rep_match:
+    print("Deployment missing spec.replicas specification")
+    sys.exit(1)
+replicas = int(rep_match.group(1))
+if replicas != 3:
+    print(f"Deployment spec.replicas expected 3 for PDB demo, found {replicas}")
+    sys.exit(1)
+
+# 5. PodDisruptionBudget API and policy verification
+if "apiVersion: policy/v1" not in pdb_text or "kind: PodDisruptionBudget" not in pdb_text:
+    print("PDB missing apiVersion: policy/v1 or kind: PodDisruptionBudget")
+    sys.exit(1)
+
+if "namespace: sample-workloads" not in pdb_text:
+    print("PDB namespace must match workload namespace: sample-workloads")
+    sys.exit(1)
+
+min_avail_match = re.search(r'minAvailable:\s*(\d+)', pdb_text)
+if not min_avail_match:
+    print("PDB missing spec.minAvailable")
+    sys.exit(1)
+min_available = int(min_avail_match.group(1))
+if min_available != 2:
+    print(f"PDB spec.minAvailable expected 2, found {min_available}")
+    sys.exit(1)
+
+# 6. Semantic arithmetic verification (replicas > minAvailable)
+if replicas <= min_available:
+    print(f"PDB arithmetic lock: replicas ({replicas}) must be greater than minAvailable ({min_available}) to permit voluntary disruption")
+    sys.exit(1)
+
+if "unhealthyPodEvictionPolicy: AlwaysAllow" not in pdb_text:
+    print("PDB expected unhealthyPodEvictionPolicy: AlwaysAllow")
+    sys.exit(1)
+
+# 7. Kustomization resource inclusion
+if "poddisruptionbudget.yaml" not in kust_text:
+    print("kustomization.yaml missing poddisruptionbudget.yaml in resources")
+    sys.exit(1)
 
 print("OK")
 sys.exit(0)
 EOF
 )
   if [ $? -eq 0 ]; then
-    log_pass "Manifest composition, selectors, ports, and securityContext verified"
+    log_pass "Manifest composition, PDB semantics (3 replicas > 2 minAvailable), and securityContext verified"
   else
     log_fail "Manifest integrity check failed: $MANIFEST_CHECK"
   fi
