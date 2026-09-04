@@ -3,44 +3,52 @@
 ## Failure Chain
 
 ```text
-Automated node maintenance triggered (AMI update / Karpenter consolidation)
+Automated or concurrent node maintenance initiated (AMI update / Karpenter consolidation / SRE drain)
         ↓
-Multiple worker nodes drained concurrently or in rapid succession
+Multiple worker nodes drained concurrently or in rapid succession without throttling
         ↓
-Eviction API invoked for workload pods
+Eviction API invoked for workload pods across drained nodes
         ↓
 No PodDisruptionBudget configured (or selector misconfigured)
         ↓
-Eviction API grants all eviction requests immediately
+Eviction API grants all eviction requests immediately (no rate or capacity constraint)
         ↓
-Multiple replicas enter Terminating state simultaneously
+Compounding conditions present:
+├── Multiple replicas evicted concurrently across parallel node drains, OR
+├── Rapid sequential drains occur before replacement pods pass readinessProbe, OR
+├── Spare cluster capacity is constrained (replacement pods remain Pending), OR
+└── Replicas were already unready or degraded prior to maintenance
         ↓
-Active serving capacity collapses below baseline demand
+Active healthy serving capacity drops below what the workload requires to absorb traffic
         ↓
 Surviving replicas become saturated / queue-bound
         ↓
-Users experience elevated latency, degraded throughput, or HTTP 503/504 errors
+Potential user symptoms emerge: elevated latency, degraded throughput, or intermittent 503/504 errors
 ```
 
 ---
 
-## 1. Trigger
+## 1. Trigger & Failure Context
 
-A routine cluster maintenance event occurs:
-- An automated AWS EKS Managed Node Group AMI update initiates a rolling replace of worker nodes.
-- A cluster autoscaler (Karpenter / Cluster Autoscaler) consolidates underutilized EC2 instances to reduce infrastructure costs.
-- An SRE drains multiple worker nodes simultaneously to decommission hardware or apply urgent kernel security patches.
+> [!NOTE]
+> An ordinary, single sequential node drain on an otherwise healthy multi-node cluster with adequate capacity does not automatically cause mass eviction or user-facing 503 errors. The vulnerability arises because **in the absence of a PDB, the control plane enforces zero policy constraints on voluntary eviction rate**.
+
+The failure mode manifests when routine cluster maintenance intersects with compounding operational conditions:
+- **Concurrent Node Maintenance:** Automated AWS EKS Managed Node Group AMI updates, Karpenter node consolidation, or automated node termination systems drain multiple worker nodes in parallel.
+- **Rapid Sequential Drains:** Node drains proceed faster than the application's bootstrapping lifecycle (slow image pulls, heavy `/startup` cache warming, or DB connection pool initialization).
+- **Constrained Spare Compute:** The cluster lacks immediate headroom, leaving replacement pods in `Pending` state while old pods are evicted.
+- **Pre-existing Degradation:** One or more replicas were already failing readiness checks or undergoing restarts before the drain began.
 
 ---
 
 ## 2. Symptom
 
-During the maintenance window, end users experience:
+Under these compounding conditions during a maintenance window, end users may experience:
 - Elevated p95 and p99 response latencies.
 - Intermittent HTTP 502 Bad Gateway or HTTP 503 Service Unavailable errors.
 - Dropped TCP connections or connection timeouts during inflight requests.
 
-Simultaneously, the monitoring dashboard shows a steep drop in active ready endpoints for the service, despite the Deployment controller actively attempting to spin up replacements.
+Simultaneously, observability metrics reflect a steep drop in active ready endpoints in the `EndpointSlice`, despite the Deployment controller attempting to create replacement pods.
 
 ---
 
@@ -48,7 +56,7 @@ Simultaneously, the monitoring dashboard shows a steep drop in active ready endp
 
 **Boundary:** Boundary between **Infrastructure Maintenance Automation** and **Application Capacity Guarantees**.
 
-Without a `PodDisruptionBudget`, the Kubernetes control plane treats all pods as immediately dispensable during voluntary eviction. The Eviction API has no policy constraint to throttle node drains to the speed of application bootstrapping and probe validation.
+Without a `PodDisruptionBudget`, the Kubernetes control plane treats all pods as immediately dispensable during voluntary eviction. The Eviction API has no policy constraint to throttle node drains to the speed of application bootstrapping, capacity provisioning, and probe validation.
 
 ---
 

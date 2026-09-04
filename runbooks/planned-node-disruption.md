@@ -75,6 +75,9 @@ sample-api   2               N/A               0                     12m   3
 Extract the detailed status from the Kubernetes API:
 
 ```bash
+# Verify specification reconciliation (observedGeneration vs metadata.generation)
+kubectl get pdb sample-api -n sample-workloads -o jsonpath='{"metadata.generation: "}{.metadata.generation}{", status.observedGeneration: "}{.status.observedGeneration}{"\n"}'
+
 # Check allowed disruptions
 kubectl get pdb sample-api -n sample-workloads -o jsonpath='{.status.disruptionsAllowed}{"\n"}'
 
@@ -85,12 +88,13 @@ kubectl get pdb sample-api -n sample-workloads -o jsonpath='{"currentHealthy: "}
 kubectl get pdb sample-api -n sample-workloads -o jsonpath='{.status.conditions}' | python -m json.tool
 ```
 
-#### Interpreting Conditions:
-- If `type: DisruptionAllowed` has `status: "False"` with `reason: InsufficientPods`:
-  - The Eviction API is actively rejecting eviction requests to prevent violating the declared availability floor.
-- Check the error body of the eviction failure:
-  - If it states `"Cannot evict pod as it would violate the pod's disruption budget"`, the blockage is confirmed to be PDB-enforced.
-  - If it states `429 Too Many Requests` without mentioning disruption budgets, investigate API server FlowSchema/APF rate limits.
+#### Interpreting Status & Conditions:
+- **Spec Reconciliation (`observedGeneration`):**
+  Per the Kubernetes API reference, PDB status fields (such as `disruptionsAllowed` and status conditions) are only confirmed valid for the current specification when `.status.observedGeneration` matches `.metadata.generation`. If `.status.observedGeneration < .metadata.generation`, the disruption controller has not yet reconciled recent changes to `spec.minAvailable` or `spec.selector`.
+- **Condition `DisruptionAllowed`:**
+  If `type: DisruptionAllowed` has `status: "False"` with `reason: InsufficientPods`, the Eviction API is actively rejecting eviction requests to prevent violating the declared availability floor.
+- **Eviction Error Body vs. API Rate Limiting:**
+  If the error response states `"Cannot evict pod as it would violate the pod's disruption budget"`, the blockage is confirmed to be PDB-enforced. If it returns HTTP 429 without mentioning disruption budgets, investigate API server FlowSchema / PriorityAndFairness (APF) client-side rate limits.
 
 ---
 

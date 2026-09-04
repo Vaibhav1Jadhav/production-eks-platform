@@ -60,7 +60,7 @@ Our platform design establishes clean boundaries between node-level control plan
 - **Production Kubernetes Manifests:** Declarative workload definition configured with Pod Security Standards (`restricted`), non-root user, dropped capabilities, and read-only root filesystem in [`kubernetes/workloads/sample-api/`](kubernetes/workloads/sample-api/).
 
 ### 2. Planned Disruption Management & PodDisruptionBudget Strategy
-- **Calibrated Disruption Budget (`minAvailable: 2`):** Guarantees a minimum serving floor during voluntary maintenance. On our 3-replica tier, permits exactly 1 eviction at a time while 2 ready replicas remain online to absorb user traffic.
+- **Calibrated Disruption Budget (`minAvailable: 2`):** Guarantees a minimum serving floor during voluntary maintenance. Scaled to 3 replicas to demonstrate single-replica voluntary disruption tolerance while 2 ready replicas remain online to absorb baseline traffic.
 - **Eviction API Policy Boundary:** Enforces that voluntary disruptions (`kubectl drain`, node consolidation) respect workload capacity, while explicitly documenting that involuntary crashes and Deployment rollouts are not constrained by PDBs.
 - **Unhealthy Pod Eviction Policy (`AlwaysAllow`):** Adopts Kubernetes v1.31+ stable policy allowing unhealthy/unready pods to be evicted during maintenance, preventing faulty applications from permanently trapping worker node OS and kernel patching.
 - **Hands-On Controlled Lab:** Step-by-step reproducible experiment on a disposable cluster demonstrating eviction pacing, probe warm-up, and over-restrictive budget deadlocks in [`failure-scenarios/disruptions/node-drain-lab.md`](failure-scenarios/disruptions/node-drain-lab.md).
