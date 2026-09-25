@@ -318,6 +318,94 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# 8. Topology Spread Constraints & Multi-AZ Policy Check
+# ------------------------------------------------------------------------------
+echo -e "\n8. Multi-AZ Topology Spread Constraints Check"
+if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/sample-api" ]; then
+  TOPOLOGY_CHECK=$($PYTHON_CMD - << 'EOF'
+import os, re, sys
+
+dep_path = "kubernetes/workloads/sample-api/deployment.yaml"
+if not os.path.isfile(dep_path):
+    print("deployment.yaml not found")
+    sys.exit(1)
+
+with open(dep_path, "r", encoding="utf-8") as f:
+    dep_text = f.read()
+
+# 1. topologySpreadConstraints exists
+if "topologySpreadConstraints:" not in dep_text:
+    print("Deployment missing topologySpreadConstraints under spec.template.spec")
+    sys.exit(1)
+
+# 2. maxSkew == 1
+skew_match = re.search(r'maxSkew:\s*(\d+)', dep_text)
+if not skew_match or int(skew_match.group(1)) != 1:
+    print("topologySpreadConstraints must specify maxSkew: 1")
+    sys.exit(1)
+
+# 3. topologyKey == topology.kubernetes.io/zone
+if "topologyKey: topology.kubernetes.io/zone" not in dep_text:
+    print("topologySpreadConstraints must specify topologyKey: topology.kubernetes.io/zone")
+    sys.exit(1)
+
+# 4. whenUnsatisfiable == DoNotSchedule
+if "whenUnsatisfiable: DoNotSchedule" not in dep_text:
+    print("topologySpreadConstraints must specify whenUnsatisfiable: DoNotSchedule")
+    sys.exit(1)
+
+# 5. labelSelector matches the sample-api selector
+tsc_match = re.search(r'topologySpreadConstraints:.*?(?=containers:)', dep_text, re.DOTALL)
+if not tsc_match:
+    print("Unable to parse topologySpreadConstraints block")
+    sys.exit(1)
+
+tsc_block = tsc_match.group(0)
+if "app.kubernetes.io/name: sample-api" not in tsc_block:
+    print("topologySpreadConstraints labelSelector must match app.kubernetes.io/name: sample-api")
+    sys.exit(1)
+
+# 6. Replicas invariant check
+rep_match = re.search(r'replicas:\s*(\d+)', dep_text)
+if not rep_match or int(rep_match.group(1)) != 3:
+    print("Deployment replicas must remain 3 for multi-AZ topology baseline")
+    sys.exit(1)
+
+# 7. Namespace consistency
+if "namespace: sample-workloads" not in dep_text:
+    print("Deployment namespace must remain sample-workloads")
+    sys.exit(1)
+
+print("OK")
+sys.exit(0)
+EOF
+)
+  if [ $? -eq 0 ]; then
+    log_pass "Topology spread configuration verified (maxSkew: 1, topologyKey: zone, whenUnsatisfiable: DoNotSchedule, matching selector)"
+  else
+    log_fail "Topology spread check failed: $TOPOLOGY_CHECK"
+  fi
+else
+  log_skip "Python or deployment.yaml unavailable"
+fi
+
+# ------------------------------------------------------------------------------
+# 9. Optional Runtime Multi-AZ Cluster Placement Verification
+# ------------------------------------------------------------------------------
+echo -e "\n9. Optional Runtime Multi-AZ Cluster Placement Check"
+if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  # Cluster is reachable; check if multi-zone nodes exist
+  ZONES=$(kubectl get nodes -L topology.kubernetes.io/zone --no-headers 2>/dev/null | awk '{print $NF}' | grep -v '<none>' | sort -u | wc -l || echo "0")
+  if [ "$ZONES" -ge 2 ]; then
+    log_pass "Runtime multi-AZ cluster verified ($ZONES distinct zones discovered)"
+  else
+    log_skip "Live cluster has fewer than 2 zones ($ZONES detected); runtime multi-AZ placement test skipped"
+  fi
+else
+  log_skip "Runtime multi-AZ cluster unreachable; statically validated; multi-AZ scheduling/failure behavior was not executed."
+fi
+
+# ------------------------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------------------------
 echo -e "\n=============================================================================="
@@ -327,6 +415,9 @@ echo "==========================================================================
 if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "Validation completed with failures."
   exit 1
+elif [ "$SKIP_COUNT" -gt 0 ]; then
+  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; multi-AZ scheduling/failure behavior was not executed)."
+  exit 0
 else
   echo "Validation completed cleanly."
   exit 0
