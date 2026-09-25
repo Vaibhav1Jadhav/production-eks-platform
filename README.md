@@ -41,12 +41,14 @@ Each capability added to this repository reflects a practical production problem
 
 ## Architecture
 
-Our platform design establishes clean boundaries between node-level control plane health signals, runtime client request data paths, and planned infrastructure maintenance:
+Our platform design establishes clean boundaries between node-level control plane health signals, runtime client request data paths, planned infrastructure maintenance, and physical multi-AZ failure domains:
 
 - **[Workload Health & Traffic Flow Architecture](architecture/diagrams/workload-health-flow.md)**: Visualizes how `kubelet` evaluates container lifecycle vs. how `Ingress`, `Service`, and `EndpointSlices` route user traffic. Demonstrates the foundational principle:
   $$\text{Container Running} \ne \text{Application Ready}$$
 - **[Planned Disruption Flow & Eviction Architecture](architecture/diagrams/planned-disruption-flow.md)**: Visualizes how the Kubernetes Eviction API interacts with `PodDisruptionBudget` during planned node maintenance (`kubectl drain`), separating policy-aware eviction from direct deletion and Deployment rolling updates. Demonstrates the reliability principle:
   $$\text{PodDisruptionBudget} \ne \text{Application High Availability}$$
+- **[Multi-AZ Topology Resilience & Failure Domain Architecture](architecture/diagrams/topology-failure-domain-flow.md)**: Visualizes how `kube-scheduler` enforces bounded skew (`maxSkew: 1`, `DoNotSchedule`) across Availability Zones (`topology.kubernetes.io/zone`), isolating single-zone infrastructure failure while modeling the hard placement pending boundary. Demonstrates the reliability principle:
+  $$\text{Replica Count} \ne \text{Placement Resilience}$$
 
 ---
 
@@ -66,6 +68,13 @@ Our platform design establishes clean boundaries between node-level control plan
 - **Hands-On Controlled Lab:** Step-by-step reproducible experiment on a disposable cluster demonstrating eviction pacing, probe warm-up, and over-restrictive budget deadlocks in [`failure-scenarios/disruptions/node-drain-lab.md`](failure-scenarios/disruptions/node-drain-lab.md).
 - **Production Manifest:** Configured in [`kubernetes/workloads/sample-api/poddisruptionbudget.yaml`](kubernetes/workloads/sample-api/poddisruptionbudget.yaml).
 
+### 3. Multi-AZ Workload Resilience & Topology Spread Strategy
+- **Failure Domain Isolation (`topology.kubernetes.io/zone`):** Binds replica distribution to physical AWS Availability Zones, ensuring replicas do not silently pack into a single physical data center.
+- **Bounded Distribution (`maxSkew: 1`):** Restricts zone skew to $\le 1$, ensuring even spread across zones during steady-state and horizontal scaling ($1/1/1$, $2/1/1$, $2/2/1$).
+- **Hard Invariant Enforcement (`whenUnsatisfiable: DoNotSchedule`):** Refuses candidate nodes that violate the skew constraint, prioritizing explicit failure domain isolation over unconstrained placement.
+- **Strict Selector Alignment:** Targets `app.kubernetes.io/name: sample-api` matching the existing workload selector.
+- **Production Manifest:** Configured under `spec.template.spec` in [`kubernetes/workloads/sample-api/deployment.yaml`](kubernetes/workloads/sample-api/deployment.yaml).
+
 ---
 
 ## Architecture Decision Records (ADR)
@@ -74,6 +83,8 @@ Our platform design establishes clean boundaries between node-level control plan
   Documents the decision to establish distinct, isolated semantics for startup, readiness, and liveness probes, alternatives evaluated (unified `/health`, downstream coupling, readiness only), and engineering trade-offs.
 - **[ADR-002: PodDisruptionBudget Strategy](architecture/adr/ADR-002-pod-disruption-budget-strategy.md)**  
   Evaluates mathematical trade-offs for voluntary disruption thresholds (`minAvailable: 2` vs `minAvailable: 1` vs `100%`), unhealthy eviction policies (`AlwaysAllow` vs `IfHealthyBudget`), and failure boundaries.
+- **[ADR-003: Workload Topology Resilience Strategy Across Multi-AZ Failure Domains](architecture/adr/ADR-003-topology-resilience-strategy.md)**
+  Evaluates placement mechanisms across multi-AZ failure domains, comparing topology spread constraints (`DoNotSchedule` vs `ScheduleAnyway`) against binary pod anti-affinity, analyzing `minDomains`, and defining safe diagnostic boundaries.
 
 ---
 
@@ -91,6 +102,11 @@ Our platform design establishes clean boundaries between node-level control plan
   - **[Scenario B: Over-Restrictive PDB](failure-scenarios/disruptions/over-restrictive-pdb.md)**: Explores how setting `minAvailable == replicas` drops `disruptionsAllowed` to 0, causing Eviction API HTTP 429 rejections and freezing infrastructure upgrades.
   - **[Hands-On Lab: Can This Workload Survive a Node Drain?](failure-scenarios/disruptions/node-drain-lab.md)**: Controlled node drain testing procedure on a disposable cluster.
 
+### Topology & Multi-AZ Resilience (Milestone #23)
+- **[Topology Failure Scenarios](failure-scenarios/topology/README.md)**:
+  - **[Scenario A: Correlated Zone Placement Risk](failure-scenarios/topology/correlated-zone-placement.md)**: Demonstrates how replica redundancy without topology constraints leaves workloads vulnerable to complete outage during single-zone physical impairments.
+  - **[Scenario B: Unsatisfiable Topology Spread & The Pending Pod Boundary](failure-scenarios/topology/unsatisfiable-topology-spread.md)**: Dissects the operational boundary of `DoNotSchedule`, differentiating topology skew constraints from node compute exhaustion, taints, and missing zone labels.
+
 ---
 
 ## Operational Runbooks
@@ -101,6 +117,9 @@ Our platform design establishes clean boundaries between node-level control plan
 - **[Runbook: Planned Node Disruption & Stuck Node Drain Investigation](runbooks/planned-node-disruption.md)**  
   Outside-in diagnostic procedure for isolating blocked node drains:
   $$\text{Node Drain} \longrightarrow \text{Eviction Denial} \longrightarrow \text{PDB Status} \longrightarrow \text{Replica Readiness} \longrightarrow \text{Scheduling Capacity} \longrightarrow \text{Safe Recovery}$$
+- **[Runbook: Topology Scheduling Failure & Pending Pod Investigation](runbooks/topology-scheduling-failure.md)**
+  Evidence-based diagnostic procedure for isolating stuck `Pending` pods:
+  $$\text{Pod Pending} \longrightarrow \text{Scheduler Events} \longrightarrow \text{Zone Topology Labels} \longrightarrow \text{Replica Skew Audit} \longrightarrow \text{Failure Domain Classification} \longrightarrow \text{Safe Recovery}$$
 
 ---
 
@@ -112,6 +131,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 | :--- | :--- | :--- | :--- | :--- |
 | [**#21**](https://lnkd.in/p/dWUXSe5t) | [Kubernetes Probes — Running ≠ Ready](https://lnkd.in/p/dWUXSe5t) | *"Your Pod Is Running. Why Are Users Still Getting 5xx?"* | **Implementation available** | [Workload Manifests](kubernetes/workloads/sample-api/) • [ADR-001](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md) • [Runbook](runbooks/pod-running-but-5xx.md) • [Failure Scenarios](failure-scenarios/probes/) |
 | **#22** | PodDisruptionBudget — Surviving Planned Disruption | *"Can This Workload Survive a Node Drain?"* | **Implementation available** *(Pending publication)* | [PDB Manifest](kubernetes/workloads/sample-api/poddisruptionbudget.yaml) • [ADR-002](architecture/adr/ADR-002-pod-disruption-budget-strategy.md) • [Planned Disruption Flow](architecture/diagrams/planned-disruption-flow.md) • [Node Drain Lab](failure-scenarios/disruptions/node-drain-lab.md) • [Runbook](runbooks/planned-node-disruption.md) • [Failure Scenarios](failure-scenarios/disruptions/) |
+| **#23** | Multi-AZ / Topology Resilience | *"Will Another Replica Survive the Failure Domain We Designed For?"* | **Implementation available** *(LinkedIn publication pending)* | [Deployment Manifest](kubernetes/workloads/sample-api/deployment.yaml) • [ADR-003](architecture/adr/ADR-003-topology-resilience-strategy.md) • [Topology Architecture](architecture/diagrams/topology-failure-domain-flow.md) • [Runbook](runbooks/topology-scheduling-failure.md) • [Failure Scenarios](failure-scenarios/topology/) |
 
 ---
 
