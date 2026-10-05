@@ -286,18 +286,18 @@ fi
 # ------------------------------------------------------------------------------
 # 6. Kustomize Build Validation (Optional Tool Check)
 # ------------------------------------------------------------------------------
-echo -e "\n6. Kustomize Build Check (kubernetes/workloads/sample-api)"
+echo -e "\n6. Kustomize Build Check (sample-api & stateful-demo)"
 if command -v kustomize >/dev/null 2>&1; then
-  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1; then
-    log_pass "kustomize build succeeded for sample-api"
+  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1; then
+    log_pass "kustomize build succeeded for sample-api and stateful-demo"
   else
-    log_fail "kustomize build failed for sample-api"
+    log_fail "kustomize build failed for workloads"
   fi
 elif command -v kubectl >/dev/null 2>&1; then
-  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1; then
-    log_pass "kubectl kustomize succeeded for sample-api"
+  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1; then
+    log_pass "kubectl kustomize succeeded for sample-api and stateful-demo"
   else
-    log_fail "kubectl kustomize failed for sample-api"
+    log_fail "kubectl kustomize failed for workloads"
   fi
 else
   log_skip "kustomize or kubectl not installed in PATH (rendering check skipped)"
@@ -308,8 +308,8 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n7. Kubectl Client Dry-Run Check"
 if command -v kubectl >/dev/null 2>&1; then
-  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1; then
-    log_pass "kubectl apply --dry-run=client succeeded"
+  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1; then
+    log_pass "kubectl apply --dry-run=client succeeded for sample-api and stateful-demo"
   else
     log_fail "kubectl apply --dry-run=client failed"
   fi
@@ -406,6 +406,138 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# 10. Stateful Workload Invariants & Storage Association Check
+# ------------------------------------------------------------------------------
+echo -e "\n10. Stateful Workload Invariants & Storage Association Check"
+if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/stateful-demo" ]; then
+  STATEFUL_CHECK=$($PYTHON_CMD - << 'EOF'
+import os, re, sys
+
+stateful_dir = "kubernetes/workloads/stateful-demo"
+files = ["service.yaml", "statefulset.yaml", "kustomization.yaml"]
+missing = [f for f in files if not os.path.isfile(os.path.join(stateful_dir, f))]
+if missing:
+    print(f"Missing required manifest files: {missing}")
+    sys.exit(1)
+
+with open(os.path.join(stateful_dir, "statefulset.yaml"), "r", encoding="utf-8") as f:
+    sts_text = f.read()
+
+with open(os.path.join(stateful_dir, "service.yaml"), "r", encoding="utf-8") as f:
+    svc_text = f.read()
+
+with open(os.path.join(stateful_dir, "kustomization.yaml"), "r", encoding="utf-8") as f:
+    kust_text = f.read()
+
+# 1. API version & kind
+if "apiVersion: apps/v1" not in sts_text or "kind: StatefulSet" not in sts_text:
+    print("StatefulSet missing apiVersion: apps/v1 or kind: StatefulSet")
+    sys.exit(1)
+
+# 2. Namespace consistency
+if "namespace: sample-workloads" not in sts_text or "namespace: sample-workloads" not in svc_text:
+    print("StatefulSet and Headless Service must both use namespace: sample-workloads")
+    sys.exit(1)
+
+# 3. ServiceName linkage and Headless Service validation
+if "serviceName: stateful-demo-headless" not in sts_text:
+    print("StatefulSet spec.serviceName must match stateful-demo-headless")
+    sys.exit(1)
+
+if "clusterIP: None" not in svc_text:
+    print("Headless Service must specify clusterIP: None")
+    sys.exit(1)
+
+if "name: stateful-demo-headless" not in svc_text:
+    print("Headless Service metadata.name must match stateful-demo-headless")
+    sys.exit(1)
+
+# 4. Selector and label alignment
+if "app.kubernetes.io/name: stateful-demo" not in sts_text:
+    print("StatefulSet missing app.kubernetes.io/name: stateful-demo label/selector")
+    sys.exit(1)
+
+if "app.kubernetes.io/name: stateful-demo" not in svc_text:
+    print("Headless Service missing app.kubernetes.io/name: stateful-demo selector")
+    sys.exit(1)
+
+# 5. Ordinal replicas and Pod management policy
+rep_match = re.search(r'replicas:\s*(\d+)', sts_text)
+if not rep_match or int(rep_match.group(1)) < 2:
+    print("StatefulSet spec.replicas must be at least 2 to demonstrate ordinal progression")
+    sys.exit(1)
+
+if "podManagementPolicy: OrderedReady" not in sts_text:
+    print("StatefulSet must specify podManagementPolicy: OrderedReady for deterministic ordering")
+    sys.exit(1)
+
+# 6. volumeClaimTemplates and volumeMounts verification
+if "volumeClaimTemplates:" not in sts_text:
+    print("StatefulSet missing volumeClaimTemplates specification")
+    sys.exit(1)
+
+if "ReadWriteOnce" not in sts_text:
+    print("volumeClaimTemplates must explicitly define accessMode: ReadWriteOnce")
+    sys.exit(1)
+
+if "storage: 1Gi" not in sts_text:
+    print("volumeClaimTemplates must define resource storage requests")
+    sys.exit(1)
+
+if "mountPath: /data" not in sts_text:
+    print("StatefulSet container missing mountPath: /data")
+    sys.exit(1)
+
+# 7. Security context & non-root with fsGroup
+for sec in ["runAsNonRoot: true", "fsGroup: 10001", "allowPrivilegeEscalation: false"]:
+    if sec not in sts_text:
+        print(f"StatefulSet missing required securityContext parameter: {sec}")
+        sys.exit(1)
+
+# 8. Readiness probe configuration
+if "readinessProbe:" not in sts_text or "path: /identity-marker.txt" not in sts_text:
+    print("StatefulSet missing readinessProbe verifying /identity-marker.txt")
+    sys.exit(1)
+
+# 9. Container resource sizing
+if "resources:" not in sts_text or "cpu: 50m" not in sts_text or "memory: 64Mi" not in sts_text:
+    print("StatefulSet container missing explicit CPU/memory resource requests")
+    sys.exit(1)
+
+# 10. Kustomization resource inclusion
+if "statefulset.yaml" not in kust_text or "service.yaml" not in kust_text:
+    print("kustomization.yaml missing statefulset.yaml or service.yaml in resources")
+    sys.exit(1)
+
+print("OK")
+sys.exit(0)
+EOF
+)
+  if [ $? -eq 0 ]; then
+    log_pass "StatefulSet invariants verified (apps/v1, Headless Service clusterIP: None, volumeClaimTemplates, OrderedReady, ReadWriteOnce, readinessProbe)"
+  else
+    log_fail "Stateful workload check failed: $STATEFUL_CHECK"
+  fi
+else
+  log_skip "Python or stateful-demo directory unavailable"
+fi
+
+# ------------------------------------------------------------------------------
+# 11. Optional Runtime Stateful Storage Provisioning Verification
+# ------------------------------------------------------------------------------
+echo -e "\n11. Optional Runtime Stateful Storage Provisioning Check"
+if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  DEFAULT_SC=$(kubectl get storageclass -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null || echo "")
+  if [ -n "$DEFAULT_SC" ]; then
+    log_pass "Runtime default StorageClass verified: $DEFAULT_SC"
+  else
+    log_skip "No default StorageClass found on cluster; runtime volume provisioning test skipped"
+  fi
+else
+  log_skip "Runtime cluster unreachable; statically validated; stateful recovery behavior was not executed."
+fi
+
+# ------------------------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------------------------
 echo -e "\n=============================================================================="
@@ -416,7 +548,7 @@ if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "Validation completed with failures."
   exit 1
 elif [ "$SKIP_COUNT" -gt 0 ]; then
-  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; multi-AZ scheduling/failure behavior was not executed)."
+  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; stateful recovery / multi-AZ scheduling behavior was not executed)."
   exit 0
 else
   echo "Validation completed cleanly."
