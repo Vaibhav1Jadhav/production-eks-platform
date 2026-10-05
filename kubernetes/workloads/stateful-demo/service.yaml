@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateful-demo-headless
+  namespace: sample-workloads
+  labels:
+    app.kubernetes.io/name: stateful-demo
+    app.kubernetes.io/instance: stateful-demo-reference
+    app.kubernetes.io/component: data-store
+    app.kubernetes.io/part-of: production-eks-platform
+spec:
+  # Headless Service (clusterIP: None) delegates DNS resolution directly to CoreDNS.
+  # Rather than returning a single load-balanced virtual IP, CoreDNS returns A/AAAA records
+  # for individual Pod IPs corresponding to each ordinal identity:
+  #   <pod-name>.stateful-demo-headless.sample-workloads.svc.cluster.local
+  # This provides deterministic network addressing for stateful replica discovery and peering.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: stateful-demo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
