@@ -49,6 +49,8 @@ Our platform design establishes clean boundaries between node-level control plan
   $$\text{PodDisruptionBudget} \ne \text{Application High Availability}$$
 - **[Multi-AZ Topology Resilience & Failure Domain Architecture](architecture/diagrams/topology-failure-domain-flow.md)**: Visualizes how `kube-scheduler` enforces bounded skew (`maxSkew: 1`, `DoNotSchedule`) across Availability Zones (`topology.kubernetes.io/zone`), isolating single-zone infrastructure failure while modeling the hard placement pending boundary. Demonstrates the reliability principle:
   $$\text{Replica Count} \ne \text{Placement Resilience}$$
+- **[Stateful Workload Recovery & Identity Architecture](architecture/diagrams/stateful-recovery-flow.md)**: Visualizes how the StatefulSet controller re-establishes deterministic ordinal identity, headless DNS addressing, and dedicated PersistentVolumeClaim association across Pod crashes, contrasting successful recovery against the storage attachment and mount failure boundary. Demonstrates the reliability principle:
+  $$\text{Pod Replacement} \ne \text{State Recovery}$$
 
 ---
 
@@ -75,6 +77,14 @@ Our platform design establishes clean boundaries between node-level control plan
 - **Strict Selector Alignment:** Targets `app.kubernetes.io/name: sample-api` matching the existing workload selector.
 - **Production Manifest:** Configured under `spec.template.spec` in [`kubernetes/workloads/sample-api/deployment.yaml`](kubernetes/workloads/sample-api/deployment.yaml).
 
+### 4. Stateful Workload Identity & Persistent State Recovery
+- **Stable Ordinal Identity (`stateful-demo-0`, `stateful-demo-1`):** Non-fungible replicas with deterministic ordinal naming, enabling direct clustering, Raft consensus, and shard targeting.
+- **Deterministic Network Identity (Headless Service):** Configures `clusterIP: None` to delegate direct A/AAAA DNS record resolution to CoreDNS (`<pod-name>.stateful-demo-headless.sample-workloads.svc.cluster.local`), eliminating virtual IP load balancing for peer-to-peer coordination.
+- **Dedicated Storage Association (`volumeClaimTemplates`):** Automatically provisions independent PersistentVolumeClaims (`data-stateful-demo-0`) bound via `ReadWriteOnce`. Claims persist independently of Pod lifecycle, automatically reattaching to replacement pods upon failure.
+- **Storage Topology & Dynamic Provisioning:** Aligns with multi-AZ topology by requiring `WaitForFirstConsumer` volume binding, ensuring backing block storage (e.g., AWS EBS) is provisioned in the same physical Availability Zone as the scheduled compute node.
+- **Data-Safety PVC Retention:** Maintains default `Retain` policy to ensure neither automated scaling nor accidental StatefulSet deletion destroys underlying persistent data.
+- **Production Kubernetes Manifests:** Configured in [`kubernetes/workloads/stateful-demo/`](kubernetes/workloads/stateful-demo/).
+
 ---
 
 ## Architecture Decision Records (ADR)
@@ -85,6 +95,8 @@ Our platform design establishes clean boundaries between node-level control plan
   Evaluates mathematical trade-offs for voluntary disruption thresholds (`minAvailable: 2` vs `minAvailable: 1` vs `100%`), unhealthy eviction policies (`AlwaysAllow` vs `IfHealthyBudget`), and failure boundaries.
 - **[ADR-003: Workload Topology Resilience Strategy Across Multi-AZ Failure Domains](architecture/adr/ADR-003-topology-resilience-strategy.md)**
   Evaluates placement mechanisms across multi-AZ failure domains, comparing topology spread constraints (`DoNotSchedule` vs `ScheduleAnyway`) against binary pod anti-affinity, analyzing `minDomains`, and defining safe diagnostic boundaries.
+- **[ADR-004: Stateful Workload Strategy & Persistent Identity Model](architecture/adr/ADR-004-stateful-workload-strategy.md)**
+  Evaluates architectural trade-offs between stateless Deployments, shared network filesystems, and StatefulSets with volume claim templates; analyzes single-node mount semantics (`ReadWriteOnce`), storage topology binding modes (`Immediate` vs `WaitForFirstConsumer`), PVC retention vs PV reclaim policy boundaries, and failure isolation.
 
 ---
 
@@ -107,6 +119,12 @@ Our platform design establishes clean boundaries between node-level control plan
   - **[Scenario A: Correlated Zone Placement Risk](failure-scenarios/topology/correlated-zone-placement.md)**: Demonstrates how replica redundancy without topology constraints leaves workloads vulnerable to complete outage during single-zone physical impairments.
   - **[Scenario B: Unsatisfiable Topology Spread & The Pending Pod Boundary](failure-scenarios/topology/unsatisfiable-topology-spread.md)**: Dissects the operational boundary of `DoNotSchedule`, differentiating topology skew constraints from node compute exhaustion, taints, and missing zone labels.
 
+### Stateful Workload Recovery (Milestone #24)
+- **[Stateful Recovery Scenarios & Hands-On Lab](failure-scenarios/stateful/README.md)**:
+  - **[Scenario 1: Pod Replacement with Persistent State](failure-scenarios/stateful/pod-replacement-with-persistent-state.md)**: Demonstrates that while a pod is destroyed, its ordinal identity, bound PVC, and persisted application data survive, verifying the complete recovery chain.
+  - **[Scenario 2: Volume Attachment & Mount Failure](failure-scenarios/stateful/volume-attachment-or-mount-failure.md)**: Explores the second failure boundary where a replacement pod is created, but remains unserviceable due to multi-attach locks, storage detach timeouts, or zone topology mismatches.
+  - **[Hands-On Lab: Verifying Stateful Recovery](failure-scenarios/stateful/stateful-recovery-lab.md)**: Controlled step-by-step procedure on a disposable cluster verifying data persistence across pod termination.
+
 ---
 
 ## Operational Runbooks
@@ -120,6 +138,9 @@ Our platform design establishes clean boundaries between node-level control plan
 - **[Runbook: Topology Scheduling Failure & Pending Pod Investigation](runbooks/topology-scheduling-failure.md)**
   Evidence-based diagnostic procedure for isolating stuck `Pending` pods:
   $$\text{Pod Pending} \longrightarrow \text{Scheduler Events} \longrightarrow \text{Zone Topology Labels} \longrightarrow \text{Replica Skew Audit} \longrightarrow \text{Failure Domain Classification} \longrightarrow \text{Safe Recovery}$$
+- **[Runbook: Stateful Workload Recovery & Storage Attachment Investigation](runbooks/stateful-workload-recovery.md)**
+  Outside-in diagnostic hierarchy tracing stateful recovery:
+  $$\text{Replica Unhealthy} \longrightarrow \text{Ordinal Identity} \longrightarrow \text{Scheduler} \longrightarrow \text{PVC Status} \longrightarrow \text{PV/StorageClass} \longrightarrow \text{Attach/Mount} \longrightarrow \text{Application State} \longrightarrow \text{Readiness}$$
 
 ---
 
@@ -132,6 +153,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 | [**#21**](https://lnkd.in/p/dWUXSe5t) | [Kubernetes Probes — Running ≠ Ready](https://lnkd.in/p/dWUXSe5t) | *"Your Pod Is Running. Why Are Users Still Getting 5xx?"* | **Implementation available** | [Workload Manifests](kubernetes/workloads/sample-api/) • [ADR-001](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md) • [Runbook](runbooks/pod-running-but-5xx.md) • [Failure Scenarios](failure-scenarios/probes/) |
 | **#22** | PodDisruptionBudget — Surviving Planned Disruption | *"Can This Workload Survive a Node Drain?"* | **Implementation available** *(Pending publication)* | [PDB Manifest](kubernetes/workloads/sample-api/poddisruptionbudget.yaml) • [ADR-002](architecture/adr/ADR-002-pod-disruption-budget-strategy.md) • [Planned Disruption Flow](architecture/diagrams/planned-disruption-flow.md) • [Node Drain Lab](failure-scenarios/disruptions/node-drain-lab.md) • [Runbook](runbooks/planned-node-disruption.md) • [Failure Scenarios](failure-scenarios/disruptions/) |
 | **#23** | Multi-AZ / Topology Resilience | *"Will Another Replica Survive the Failure Domain We Designed For?"* | **Implementation available** *(LinkedIn publication pending)* | [Deployment Manifest](kubernetes/workloads/sample-api/deployment.yaml) • [ADR-003](architecture/adr/ADR-003-topology-resilience-strategy.md) • [Topology Architecture](architecture/diagrams/topology-failure-domain-flow.md) • [Runbook](runbooks/topology-scheduling-failure.md) • [Failure Scenarios](failure-scenarios/topology/) |
+| **#24** | Stateful Workloads — Pod Replacement ≠ State Replacement | *"Can the Workload Recover with the Correct Identity and State?"* | **Implementation available** *(LinkedIn publication pending)* | [StatefulSet Manifests](kubernetes/workloads/stateful-demo/) • [ADR-004](architecture/adr/ADR-004-stateful-workload-strategy.md) • [Stateful Architecture](architecture/diagrams/stateful-recovery-flow.md) • [Runbook](runbooks/stateful-workload-recovery.md) • [Failure Scenarios](failure-scenarios/stateful/) |
 
 ---
 
