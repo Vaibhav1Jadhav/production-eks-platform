@@ -1,20 +1,10 @@
 # Stateful Workload Failure Scenarios: Identity & Persistent Recovery
 
-This directory explores how stateful workloads behave under Pod loss, node failure, and storage attachment constraints, contrasting the seamless replacement of stateless replicas with the failure boundaries of persistent state.
+A Pod crashes. For a stateless workload, Kubernetes replaces the container on any available node and traffic resumes once the process passes readiness checks.
 
-Engineering thesis:
+For a stateful workload, replacing the process is only part of the recovery path. The replacement Pod may have the right ordinal identity, but it still has to bind the right PVC, attach the backing block device, mount the filesystem, and replay any application state before it can declare itself ready.
 
-$$
-\text{Stateless Replica} \longrightarrow \text{Replaceable}
-$$
-
-$$
-\text{Stateful Replica} \longrightarrow \text{Recoverable (Identity + State)}
-$$
-
-> "A stateless replica can often be replaced. A stateful replica may need to be recovered with the correct identity and the correct data."
->
-> "Pod replacement is not the same as state recovery."
+"Pod replacement is not the same as state recovery."
 
 ---
 

@@ -1,30 +1,18 @@
 # Stateful Workload Recovery & Identity Architecture
 
-This architecture document visualizes how Kubernetes manages workload identity, network addressing, and persistent storage association during StatefulSet Pod replacement, and models the failure boundaries that emerge when persistent state becomes coupled to compute lifecycles.
+When a stateless Pod disappears, Kubernetes replaces the process on any available node. When a stateful Pod disappears, replacing the process is only the first step. The workload's ordinal identity, headless network address, and persistent volume claim must be stitched back together before the application can read its state.
 
-Engineering thesis:
-
-$$
-\text{Stateless Replica} \longrightarrow \text{Replaceable}
-$$
-
-$$
-\text{Stateful Replica} \longrightarrow \text{Recoverable (Identity + State)}
-$$
-
-> "A stateless replica can often be replaced. A stateful replica may need to be recovered with the correct identity and the correct data."
->
-> "Pod replacement is not the same as state recovery."
+"Pod replacement is not the same as state recovery."
 
 ---
 
-## The Recovery Model: What Survived When the Pod Did Not?
+## What Survived When the Pod Did Not?
 
 A Pod disappears.
 
-For a stateless workload like `sample-api`, the failure model is straightforward: the Deployment controller observes the missing replica, creates another Pod with an arbitrary random hash identity, schedules it to any node with available compute, and resumes routing once the readiness probe passes.
+For a stateless workload, the failure model is straightforward: the Deployment controller observes the missing replica, creates another Pod with a random hash suffix, schedules it to any node with available compute, and resumes routing once the readiness probe passes.
 
-For a stateful workload, "create another Pod" is not enough. Replicas are not fungible commodities. A stateful replacement requires a coordinated recovery chain:
+For a stateful workload, replicas are not fungible commodities. A stateful replacement requires a coordinated recovery chain:
 
 ```text
 Pod Ordinal (stateful-demo-0)

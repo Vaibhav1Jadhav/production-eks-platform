@@ -175,10 +175,6 @@ kubectl delete pvc -l app.kubernetes.io/name=stateful-demo -n sample-workloads
 
 ---
 
-## Conclusion & Key Takeaway
+## Operational Takeaway
 
-This controlled lab demonstrates the core engineering principle:
-
-$$\text{Pod Deleted} \ne \text{Data Deleted}$$
-
-While the Pod was completely destroyed and replaced, the **ordinal identity**, the **PersistentVolumeClaim**, the **PersistentVolume**, and the **application data** survived intact.
+Deleting a StatefulSet Pod destroys the compute container, but leaves the ordinal identity, the PersistentVolumeClaim, and the underlying cloud storage intact. When the StatefulSet reconciles, the replacement attaches to the same volume and resumes state, demonstrating that Pod destruction does not equal data destruction.
