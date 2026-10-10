@@ -51,6 +51,8 @@ Our platform design establishes clean boundaries between node-level control plan
   $$\text{Replica Count} \ne \text{Placement Resilience}$$
 - **[Stateful Workload Recovery & Identity Architecture](architecture/diagrams/stateful-recovery-flow.md)**: Visualizes how the StatefulSet controller re-establishes deterministic ordinal identity, headless DNS addressing, and dedicated PersistentVolumeClaim association across Pod crashes, contrasting successful recovery against the storage attachment and mount failure boundary. Demonstrates the reliability principle:
   $$\text{Pod Replacement} \ne \text{State Recovery}$$
+- **[Secret Trust-Boundary & Delivery Flow Architecture](architecture/diagrams/secret-trust-boundary-flow.md)**: Visualizes the four system planes (control, storage, runtime, observability), contrasting least-privilege RBAC scoping against broad collection verbs, evaluating in-memory `tmpfs` volume projection vs. environment variables, and identifying downstream application leakage channels. Demonstrates the security principle:
+  $$\text{Base64 Encoding} \ne \text{Secret Management}$$
 
 ---
 
@@ -85,6 +87,13 @@ Our platform design establishes clean boundaries between node-level control plan
 - **Data-Safety PVC Retention:** Maintains default `Retain` policy to ensure neither automated scaling nor accidental StatefulSet deletion destroys underlying persistent data.
 - **Production Kubernetes Manifests:** Configured in [`kubernetes/workloads/stateful-demo/`](kubernetes/workloads/stateful-demo/).
 
+### 5. Kubernetes Secret Trust-Boundary & Delivery Strategy
+- **Base64 Representation Boundary:** Distinguishes data representation (RFC 4648) from cryptographic confidentiality, demonstrating that Base64 confers zero encryption or access control.
+- **Least-Privilege RBAC Scoping:** Binds workload ServiceAccount strictly to named secrets using `resourceNames: ["demo-app-secret"]` and narrow verb `get`, rejecting wildcard `*` or collection-level `list`/`watch` permissions that expand blast radius across the namespace.
+- **In-Memory Volume Projection:** Delivers secrets via `tmpfs` volume mounts with strict permissions (`defaultMode: 0400`, `readOnly: true`), ensuring credentials reside in node RAM rather than persistent block storage.
+- **Safe Manifest Hygiene:** Rejects committed raw/Base64 credentials in Git, using synthetic placeholders (`<DEMO_SECRET_VALUE>`) in declarative manifests and documenting out-of-band imperative provisioning for local clusters.
+- **Production Kubernetes Manifests:** Configured in [`kubernetes/workloads/secret-demo/`](kubernetes/workloads/secret-demo/).
+
 ---
 
 ## Architecture Decision Records (ADR)
@@ -97,6 +106,8 @@ Our platform design establishes clean boundaries between node-level control plan
   Evaluates placement mechanisms across multi-AZ failure domains, comparing topology spread constraints (`DoNotSchedule` vs `ScheduleAnyway`) against binary pod anti-affinity, analyzing `minDomains`, and defining safe diagnostic boundaries.
 - **[ADR-004: Stateful Workload Strategy & Persistent Identity Model](architecture/adr/ADR-004-stateful-workload-strategy.md)**
   Evaluates architectural trade-offs between stateless Deployments, shared network filesystems, and StatefulSets with volume claim templates; analyzes single-node mount semantics (`ReadWriteOnce`), storage topology binding modes (`Immediate` vs `WaitForFirstConsumer`), PVC retention vs PV reclaim policy boundaries, and failure isolation.
+- **[ADR-005: Kubernetes Secret Handling & Trust-Boundary Strategy](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md)**
+  Evaluates native secret storage, Base64 representation limits, RBAC resource scoping, volume mount delivery vs environment variables, and rotation boundaries before external secret managers.
 
 ---
 
@@ -125,6 +136,14 @@ Our platform design establishes clean boundaries between node-level control plan
   - **[Scenario 2: Volume Attachment & Mount Failure](failure-scenarios/stateful/volume-attachment-or-mount-failure.md)**: Explores the second failure boundary where a replacement pod is created, but remains unserviceable due to multi-attach locks, storage detach timeouts, or zone topology mismatches.
   - **[Hands-On Lab: Verifying Stateful Recovery](failure-scenarios/stateful/stateful-recovery-lab.md)**: Controlled step-by-step procedure on a disposable cluster verifying data persistence across pod termination.
 
+### Kubernetes Secrets & Trust Boundaries (Milestone #25)
+- **[Secret Failure Scenarios & Hands-On Lab](failure-scenarios/secrets/README.md)**:
+  - **[Scenario 1: Unauthorized Secret Access](failure-scenarios/secrets/unauthorized-secret-access.md)**: Diagnoses RBAC authorization boundaries and API HTTP 403 Forbidden rejections using `kubectl auth can-i`.
+  - **[Scenario 2: Over-Permissive Secret Access](failure-scenarios/secrets/over-permissive-secret-access.md)**: Explores how broad `list`/`watch` permissions expand blast radius across the namespace, contrasting against `resourceNames` least privilege.
+  - **[Scenario 3: Secret Leakage Outside Kubernetes](failure-scenarios/secrets/secret-leakage-outside-kubernetes.md)**: Analyzes how application runtimes leak credentials into stdout logs and APM telemetry despite secure platform delivery.
+  - **[Scenario 4: Secret Rotation Lifecycle Boundary](failure-scenarios/secrets/secret-rotation-lifecycle-boundary.md)**: Dissects the desynchronization trap between kubelet atomic filesystem symlink updates and application in-memory credential caching.
+  - **[Hands-On Lab: Secret Security & Trust-Boundary Verification](failure-scenarios/secrets/secret-security-lab.md)**: Controlled step-by-step verification on a disposable cluster.
+
 ---
 
 ## Operational Runbooks
@@ -141,6 +160,9 @@ Our platform design establishes clean boundaries between node-level control plan
 - **[Runbook: Stateful Workload Recovery & Storage Attachment Investigation](runbooks/stateful-workload-recovery.md)**
   Outside-in diagnostic hierarchy tracing stateful recovery:
   $$\text{Replica Unhealthy} \longrightarrow \text{Ordinal Identity} \longrightarrow \text{Scheduler} \longrightarrow \text{PVC Status} \longrightarrow \text{PV/StorageClass} \longrightarrow \text{Attach/Mount} \longrightarrow \text{Application State} \longrightarrow \text{Readiness}$$
+- **[Runbook: Secret Access, Mounting & Delivery Failure Investigation](runbooks/secret-access-and-delivery-failure.md)**
+  Outside-in diagnostic hierarchy tracing credential failures:
+  $$\text{Credential Failure} \longrightarrow \text{Workload Identity} \longrightarrow \text{Secret Object} \longrightarrow \text{RBAC Authorization} \longrightarrow \text{tmpfs Mount} \longrightarrow \text{File Mode 0400} \longrightarrow \text{Memory Freshness}$$
 
 ---
 
@@ -148,12 +170,20 @@ Our platform design establishes clean boundaries between node-level control plan
 
 This repository serves as the practical evidence layer for the LinkedIn series **Production DevOps Insights**:
 
+### Volume 1: Kubernetes Workload & Node Reliability
+
 | Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | [**#21**](https://lnkd.in/p/dWUXSe5t) | [Kubernetes Probes — Running ≠ Ready](https://lnkd.in/p/dWUXSe5t) | *"Your Pod Is Running. Why Are Users Still Getting 5xx?"* | **Implementation available** | [Workload Manifests](kubernetes/workloads/sample-api/) • [ADR-001](architecture/adr/ADR-001-kubernetes-health-probe-strategy.md) • [Runbook](runbooks/pod-running-but-5xx.md) • [Failure Scenarios](failure-scenarios/probes/) |
 | **#22** | PodDisruptionBudget — Surviving Planned Disruption | *"Can This Workload Survive a Node Drain?"* | **Implementation available** *(Pending publication)* | [PDB Manifest](kubernetes/workloads/sample-api/poddisruptionbudget.yaml) • [ADR-002](architecture/adr/ADR-002-pod-disruption-budget-strategy.md) • [Planned Disruption Flow](architecture/diagrams/planned-disruption-flow.md) • [Node Drain Lab](failure-scenarios/disruptions/node-drain-lab.md) • [Runbook](runbooks/planned-node-disruption.md) • [Failure Scenarios](failure-scenarios/disruptions/) |
 | **#23** | Multi-AZ / Topology Resilience | *"Will Another Replica Survive the Failure Domain We Designed For?"* | **Implementation available** *(LinkedIn publication pending)* | [Deployment Manifest](kubernetes/workloads/sample-api/deployment.yaml) • [ADR-003](architecture/adr/ADR-003-topology-resilience-strategy.md) • [Topology Architecture](architecture/diagrams/topology-failure-domain-flow.md) • [Runbook](runbooks/topology-scheduling-failure.md) • [Failure Scenarios](failure-scenarios/topology/) |
 | **#24** | Stateful Workloads — Pod Replacement ≠ State Replacement | *"Can the Workload Recover with the Correct Identity and State?"* | **Implementation available** *(LinkedIn publication pending)* | [StatefulSet Manifests](kubernetes/workloads/stateful-demo/) • [ADR-004](architecture/adr/ADR-004-stateful-workload-strategy.md) • [Stateful Architecture](architecture/diagrams/stateful-recovery-flow.md) • [Runbook](runbooks/stateful-workload-recovery.md) • [Failure Scenarios](failure-scenarios/stateful/) |
+
+### Volume 2: Security, Delivery, GitOps & IaC
+
+| Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
+| :--- | :--- | :--- | :--- | :--- |
+| **#25** | Kubernetes Secrets — Base64 ≠ Secret Management | *"Who Can Retrieve the Credential, Where Does It Live, and Where Can It Leak?"* | **Implementation available** *(LinkedIn publication pending)* | [Workload Manifests](kubernetes/workloads/secret-demo/) • [ADR-005](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md) • [Secret Trust-Boundary Flow](architecture/diagrams/secret-trust-boundary-flow.md) • [Runbook](runbooks/secret-access-and-delivery-failure.md) • [Failure Scenarios](failure-scenarios/secrets/) |
 
 ---
 
