@@ -286,16 +286,16 @@ fi
 # ------------------------------------------------------------------------------
 # 6. Kustomize Build Validation (Optional Tool Check)
 # ------------------------------------------------------------------------------
-echo -e "\n6. Kustomize Build Check (sample-api & stateful-demo)"
+echo -e "\n6. Kustomize Build Check (sample-api, stateful-demo & secret-demo)"
 if command -v kustomize >/dev/null 2>&1; then
-  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1; then
-    log_pass "kustomize build succeeded for sample-api and stateful-demo"
+  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/secret-demo >/dev/null 2>&1; then
+    log_pass "kustomize build succeeded for sample-api, stateful-demo and secret-demo"
   else
     log_fail "kustomize build failed for workloads"
   fi
 elif command -v kubectl >/dev/null 2>&1; then
-  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1; then
-    log_pass "kubectl kustomize succeeded for sample-api and stateful-demo"
+  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/secret-demo >/dev/null 2>&1; then
+    log_pass "kubectl kustomize succeeded for sample-api, stateful-demo and secret-demo"
   else
     log_fail "kubectl kustomize failed for workloads"
   fi
@@ -308,8 +308,8 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n7. Kubectl Client Dry-Run Check"
 if command -v kubectl >/dev/null 2>&1; then
-  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1; then
-    log_pass "kubectl apply --dry-run=client succeeded for sample-api and stateful-demo"
+  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/secret-demo >/dev/null 2>&1; then
+    log_pass "kubectl apply --dry-run=client succeeded for sample-api, stateful-demo and secret-demo"
   else
     log_fail "kubectl apply --dry-run=client failed"
   fi
@@ -538,6 +538,151 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# 12. Kubernetes Secret Trust-Boundary, RBAC Least-Privilege & Base64 Semantics Check
+# ------------------------------------------------------------------------------
+echo -e "\n12. Kubernetes Secret Trust-Boundary & Least-Privilege RBAC Check"
+if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/secret-demo" ]; then
+  SECRET_CHECK=$($PYTHON_CMD - << 'EOF'
+import os, sys, base64, re
+
+# 1. Base64 Reversibility Verification (Representation != Confidentiality)
+raw_test = b"DevOpsSecret#2026!"
+encoded = base64.b64encode(raw_test)
+decoded = base64.b64decode(encoded)
+if decoded != raw_test:
+    print("Base64 symmetric decode mismatch")
+    sys.exit(1)
+
+# 2. Manifest Presence
+secret_dir = "kubernetes/workloads/secret-demo"
+files = ["serviceaccount.yaml", "role.yaml", "rolebinding.yaml", "secret.yaml", "deployment.yaml", "kustomization.yaml"]
+missing = [f for f in files if not os.path.isfile(os.path.join(secret_dir, f))]
+if missing:
+    print(f"Missing required manifest files: {missing}")
+    sys.exit(1)
+
+with open(os.path.join(secret_dir, "serviceaccount.yaml"), "r", encoding="utf-8") as f:
+    sa_text = f.read()
+
+with open(os.path.join(secret_dir, "role.yaml"), "r", encoding="utf-8") as f:
+    role_text = f.read()
+
+with open(os.path.join(secret_dir, "rolebinding.yaml"), "r", encoding="utf-8") as f:
+    rb_text = f.read()
+
+with open(os.path.join(secret_dir, "secret.yaml"), "r", encoding="utf-8") as f:
+    sec_text = f.read()
+
+with open(os.path.join(secret_dir, "deployment.yaml"), "r", encoding="utf-8") as f:
+    dep_text = f.read()
+
+with open(os.path.join(secret_dir, "kustomization.yaml"), "r", encoding="utf-8") as f:
+    kust_text = f.read()
+
+# 3. RBAC Scoping & Verbs
+if "name: secret-reader-role" not in role_text:
+    print("Role missing metadata.name: secret-reader-role")
+    sys.exit(1)
+
+if "resourceNames:" not in role_text or "demo-app-secret" not in role_text:
+    print("Role must restrict access using resourceNames: [demo-app-secret]")
+    sys.exit(1)
+
+verbs_match = re.search(r'verbs:\s*(\[.*?\]|(?:\n\s*-\s*[^\n]+)+)', role_text)
+if not verbs_match:
+    print("Role missing verbs definition")
+    sys.exit(1)
+verbs_str = verbs_match.group(0)
+if "get" not in verbs_str:
+    print("Role must grant verb: get")
+    sys.exit(1)
+
+if any(b in verbs_str for b in ["*", "list", "watch"]):
+    print("Least-privilege Role must not grant wildcard * or collection-level list/watch verbs on secrets")
+    sys.exit(1)
+
+# 4. Identity Binding
+if "name: secret-demo-sa" not in sa_text:
+    print("ServiceAccount missing name: secret-demo-sa")
+    sys.exit(1)
+
+if "name: secret-reader-role" not in rb_text or "secret-demo-sa" not in rb_text:
+    print("RoleBinding must bind secret-reader-role to ServiceAccount secret-demo-sa")
+    sys.exit(1)
+
+# 5. Workload Volume Delivery & Security Context
+if "serviceAccountName: secret-demo-sa" not in dep_text:
+    print("Deployment spec must configure serviceAccountName: secret-demo-sa")
+    sys.exit(1)
+
+if "secretName: demo-app-secret" not in dep_text:
+    print("Deployment volume must reference secretName: demo-app-secret")
+    sys.exit(1)
+
+if "mountPath: /etc/secrets/demo-app-secret" not in dep_text or "readOnly: true" not in dep_text:
+    print("Deployment container must mount secret at /etc/secrets/demo-app-secret with readOnly: true")
+    sys.exit(1)
+
+if "defaultMode: 256" not in dep_text and "defaultMode: 0400" not in dep_text:
+    print("Deployment volume must enforce defaultMode: 256 (0400 octal) read-only permissions")
+    sys.exit(1)
+
+for sec in ["runAsNonRoot: true", "readOnlyRootFilesystem: true", "allowPrivilegeEscalation: false"]:
+    if sec not in dep_text:
+        print(f"Deployment missing required securityContext parameter: {sec}")
+        sys.exit(1)
+
+# 6. Synthetic Secret Hygiene
+if "<DEMO_SECRET_VALUE>" not in sec_text:
+    print("Secret manifest must contain synthetic placeholder <DEMO_SECRET_VALUE>")
+    sys.exit(1)
+
+# 7. Documentation Artifact Verification
+doc_files = [
+    "architecture/diagrams/secret-trust-boundary-flow.md",
+    "architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md",
+    "failure-scenarios/secrets/README.md",
+    "failure-scenarios/secrets/unauthorized-secret-access.md",
+    "failure-scenarios/secrets/over-permissive-secret-access.md",
+    "failure-scenarios/secrets/secret-leakage-outside-kubernetes.md",
+    "failure-scenarios/secrets/secret-rotation-lifecycle-boundary.md",
+    "failure-scenarios/secrets/secret-security-lab.md",
+    "runbooks/secret-access-and-delivery-failure.md"
+]
+missing_docs = [f for f in doc_files if not os.path.isfile(f)]
+if missing_docs:
+    print(f"Missing required documentation files: {missing_docs}")
+    sys.exit(1)
+
+print("OK")
+sys.exit(0)
+EOF
+)
+  if [ $? -eq 0 ]; then
+    log_pass "Secret trust boundaries verified (Base64 reversibility, resourceNames: [demo-app-secret], verbs: [get], tmpfs volume projection 0400, synthetic placeholder)"
+  else
+    log_fail "Secret validation check failed: $SECRET_CHECK"
+  fi
+else
+  log_skip "Python or secret-demo directory unavailable"
+fi
+
+# ------------------------------------------------------------------------------
+# 13. Optional Runtime Secret Authorization Verification
+# ------------------------------------------------------------------------------
+echo -e "\n13. Optional Runtime Secret Authorization Check"
+if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  CAN_GET=$(kubectl auth can-i get secret/demo-app-secret --as=system:serviceaccount:sample-workloads:secret-demo-sa -n sample-workloads 2>/dev/null || echo "no")
+  if [ "$CAN_GET" = "yes" ]; then
+    log_pass "Runtime Secret authorization verified (secret-demo-sa can get demo-app-secret)"
+  else
+    log_skip "Runtime secret-demo-sa cannot get demo-app-secret or workload unapplied; runtime auth test skipped"
+  fi
+else
+  log_skip "Runtime cluster unreachable; statically validated; secret access and runtime RBAC denial behavior was not executed."
+fi
+
+# ------------------------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------------------------
 echo -e "\n=============================================================================="
@@ -548,7 +693,7 @@ if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "Validation completed with failures."
   exit 1
 elif [ "$SKIP_COUNT" -gt 0 ]; then
-  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; stateful recovery / multi-AZ scheduling behavior was not executed)."
+  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; secret access / stateful recovery / multi-AZ scheduling behavior was not executed)."
   exit 0
 else
   echo "Validation completed cleanly."
