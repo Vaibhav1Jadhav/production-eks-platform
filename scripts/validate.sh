@@ -647,6 +647,7 @@ doc_files = [
     "failure-scenarios/secrets/secret-leakage-outside-kubernetes.md",
     "failure-scenarios/secrets/secret-rotation-lifecycle-boundary.md",
     "failure-scenarios/secrets/secret-security-lab.md",
+    "failure-scenarios/secrets/validation.md",
     "runbooks/secret-access-and-delivery-failure.md"
 ]
 missing_docs = [f for f in doc_files if not os.path.isfile(f)]

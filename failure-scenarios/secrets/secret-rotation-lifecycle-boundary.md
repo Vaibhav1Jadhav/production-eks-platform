@@ -136,9 +136,49 @@ flowchart TD
 
 | Delivery Model | Filesystem Update | Process Memory Update | Required Operator Action |
 | :--- | :--- | :--- | :--- |
-| **Volume Mount (Standard)** | Automatic (Kubelet sync loop, usually 60–90 seconds via atomic symlink swap). | **Stale.** Process does not reload unless application implements `inotify` / file watching. | Restart pods via `kubectl rollout restart deployment/<name>`. |
-| **Environment Variable** | **None.** Container environment is immutable after `execve()`. | **Stale.** Process cannot observe updated environment variable. | Restart pods via `kubectl rollout restart deployment/<name>`. |
+| **Volume Mount (Directory Projection)** | Automatic (Kubelet sync loop, usually 60–90 seconds via atomic symlink swap of `..data`). | **Stale.** Process does not reload unless application implements `inotify` / file watching. | Restart pods via `kubectl rollout restart deployment/<name>` or implement in-process reloader. |
+| **Volume Mount via `subPath`** | **None.** `subPath` directly bind-mounts the file inode; it is exempt from kubelet symlink updates. | **Stale.** File on disk never changes; process never sees updated credential. | Mandatory pod restart via `kubectl rollout restart deployment/<name>`. |
+| **Environment Variable (`secretKeyRef`)** | **None.** Container environment is immutable after `execve()`. | **Stale.** Process cannot observe updated environment variable. | Mandatory pod restart via `kubectl rollout restart deployment/<name>`. |
 | **Immutable Secret (`immutable: true`)** | **Prohibited.** Secret cannot be modified in place. | **N/A.** | Create `secret-v2`, update Deployment manifest to point to `secret-v2`, trigger rolling rollout. |
+
+---
+
+### The 7-Stage End-to-End Secret Rotation Lifecycle
+
+Safe credential rotation requires decoupling the lifecycle into seven distinct, verifiable stages:
+
+```mermaid
+flowchart LR
+    S1["1. Source Mutation\n(Change upstream DB/API)"] --> S2["2. K8s Secret Update\n(Apply to kube-apiserver)"]
+    S2 --> S3["3. Workload Delivery\n(Kubelet tmpfs projection)"]
+    S3 --> S4["4. Application Reload\n(Inotify / Pod restart)"]
+    S4 --> S5["5. App Authenticates\n(Verify live connection)"]
+    S5 --> S6["6. Upstream Revocation\n(Revoke old credential)"]
+    S6 --> S7["7. Recovery / Rollback\n(Fallback if auth breaks)"]
+```
+
+1. **Stage 1 — Authoritative Source Mutation:** The upstream service (e.g., database, third-party API) provisions the new credential while temporarily accepting both old and new credentials (dual-credential transition window).
+2. **Stage 2 — Kubernetes Secret Object Update:** The Secret object in the Kubernetes control plane is updated (`kubectl apply` or secret synchronization).
+3. **Stage 3 — Workload Filesystem Delivery:** The kubelet receives the update and refreshes the projected directory volume via atomic symlink swap (or replacement pod startup). *(Note: `subPath` mounts will NOT update in place).*
+4. **Stage 4 — Application Detection & In-Memory Reload:** The application detects the new file via filesystem watcher (`inotify`) or by restarting the container process (`kubectl rollout restart`).
+5. **Stage 5 — Workload Downstream Authentication Verification:** The running application successfully authenticates against the upstream service using the new credential.
+6. **Stage 6 — Authoritative Source Old Credential Revocation:** Only after 100% of workload replicas are verified healthy under the new credential is the old credential deactivated at the authoritative source.
+7. **Stage 7 — Rollback & Recovery Window:** If authentication fails at Stage 5, the cluster can safely revert to the previous credential before Stage 6 occurs.
+
+### Rotation vs. Revocation: Crucial Distinction
+- **Rotation** is the process of generating, distributing, and adopting a new credential across all consumers.
+- **Revocation** is the destruction or invalidation of the old credential at the authoritative source.
+- **The Golden Rule:** Never revoke the old credential until all consumers have demonstrably switched and verified authentication with the new one.
+
+### Dangerous Operational Assumptions
+1. **Assumption:** *"Updating the Kubernetes Secret updates all running applications."*
+   **Reality:** Running processes cache credentials in heap memory; without an inotify watcher or pod rollout, the process never reads the new value.
+2. **Assumption:** *"A successful volume refresh guarantees successful authentication."*
+   **Reality:** The filesystem contains bytes; it does not validate that those bytes are syntactically valid or accepted by the upstream database.
+3. **Assumption:** *"A restarted Pod proves the old credential was revoked."*
+   **Reality:** Pod restarts ensure the new Secret is read, but do not affect the upstream database. If the old credential is never revoked, it remains an active attack surface.
+4. **Assumption:** *"A successful Secret sync proves the external credential is valid."*
+   **Reality:** Kubernetes accepts arbitrary Base64 strings. It performs zero validation against external authorization servers.
 
 ---
 

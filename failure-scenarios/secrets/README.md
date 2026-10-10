@@ -52,6 +52,7 @@ Authorized Delivery ≠ Safe Application Handling
 | **[Scenario 3: Secret Leakage Outside Kubernetes](secret-leakage-outside-kubernetes.md)** | Application Runtime & Telemetry Boundary | Kubernetes securely delivers the secret, but the application runtime leaks it via stdout/stderr, crash dumps, or debug endpoints. | **DESIGNED / STATICALLY VALIDATED** |
 | **[Scenario 4: Secret Rotation Lifecycle Boundary](secret-rotation-lifecycle-boundary.md)** | In-Memory Staleness & Symlink Updates | Updating a Secret in Kubernetes updates the mounted file on `tmpfs`, but running application processes retain stale credentials in memory. | **DESIGNED / STATICALLY VALIDATED** |
 | **[Hands-On Lab: Secret Security & Trust-Boundary Verification](secret-security-lab.md)** | Controlled Verification Procedure | Reproducible step-by-step lab demonstrating Base64 reversibility, out-of-band secret creation, volume delivery, and RBAC denial. | **DESIGNED / PROCEDURE READY** |
+| **[Validation Evidence: Security Audit Matrix](validation.md)** | Reproducible Audit & Evidence Matrix | Complete test matrix, tool environment, static validation results, and boundary limitations for Milestone #25. | **STATICALLY VALIDATED / AUDITED** |
 
 ---
 

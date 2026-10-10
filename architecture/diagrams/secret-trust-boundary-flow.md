@@ -152,6 +152,11 @@ rules:
 
 Granting `list` or `watch` permissions on `secrets` allows an identity to scrape metadata and contents of every secret in the namespace. Least-privilege consumers should only receive `get` on their designated secret name.
 
+### Direct vs. Indirect Secret Access Boundary
+- **Direct API Boundary:** Governed by Kubernetes RBAC. Restricting `secrets` `get`/`list` prevents an identity from querying Secret objects directly.
+- **Kubelet Volume Mount Boundary:** Kubelet retrieves Secrets using node authorization. A workload Pod does not need Secret RBAC to mount a Secret volume.
+- **Indirect Access Boundary:** If an identity can create Pods (`pods/create`, `deployments/create`) in a namespace, it can schedule a Pod that mounts and outputs any Secret in that namespace, bypassing Secret RBAC unless restricted by admission control policies (e.g., Kyverno or OPA/Gatekeeper).
+
 ---
 
 ## Trust Boundary 3: Workload Delivery (Volume Mount vs. Environment Variables)
@@ -191,7 +196,7 @@ flowchart LR
 | **File Permissions** | Enforced via `defaultMode: 0400` (readable only by process owner). | Ineffective; any process running as the same UID can read `/proc/$PID/environ`. |
 | **Child Process Leakage** | Child processes do not automatically open the file. | Child processes (`sh`, helper binaries, debugging tools) inherit full environment by default. |
 | **Crash & Error Reporting** | Error logging frameworks rarely dump arbitrary file contents. | Sentry, APM, and panic traces frequently dump process environment variables into external logging systems. |
-| **Dynamic Rotation** | Kubelet automatically updates symlinks (`..data`) when Secret changes. | **Frozen at process startup.** Updating the Secret never changes environment of a running process. |
+| **Dynamic Rotation** | Kubelet automatically updates directory symlinks (`..data`) when Secret changes. *(Note: Volume mounts using `subPath` do NOT update).* | **Frozen at process startup.** Updating the Secret never changes environment of a running process. |
 
 ---
 
