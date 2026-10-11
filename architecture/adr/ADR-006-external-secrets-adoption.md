@@ -58,7 +58,7 @@ We adopt **External Secrets Operator (ESO) v0.9.11** with the `external-secrets.
 - Workload application pods use an unprivileged ServiceAccount (`external-secret-app-sa`) that possesses **zero AWS IAM permissions**, preventing workloads from querying cloud provider APIs directly.
 - **Access Boundary Realities:**
   - Removing AWS IAM permissions prevents cloud API traversal, but does **not** prevent compromise of the Kubernetes Secret delivered to the workload container. If the workload is compromised (e.g. via RCE), its delivered credentials can still be exfiltrated.
-  - Identities with pod creation or exec permissions (`pods/create`, `pods/exec`) in the namespace can mount or extract secrets. Complete isolation requires combining IAM scoping, namespace RBAC, and admission controls.
+  - Identities with pod creation or exec permissions (`pods/create`, `pods/exec`) in the namespace can mount or extract secrets. While Pod Security Standards (PSS) enforce execution security properties (e.g., non-root user, dropped capabilities), PSS does not restrict Secret references. Complete isolation requires combining IAM scoping, namespace RBAC, workload authorization design, and fine-grained admission policies (e.g., Kyverno, Gatekeeper, ValidatingAdmissionPolicy).
 
 ### 3. Enforce Namespaced `SecretStore` Boundaries
 - Workloads must use namespaced `kind: SecretStore` resources rather than cluster-wide `ClusterSecretStore` resources, unless multi-tenant sharing is explicitly approved.
@@ -110,7 +110,7 @@ We adopt **External Secrets Operator (ESO) v0.9.11** with the `external-secrets.
 
 ### Boundary 2: Controller IAM vs. Workload Identity
 - ESO requires `secretsmanager:GetSecretValue` and `secretsmanager:DescribeSecret` scoped strictly to target secret ARNs (`production/app/database-*`).
-- The application pod requires zero AWS permissions, preventing direct AWS Secrets Manager API queries. However, the workload still receives the native Kubernetes Secret in its environment, meaning workload compromise exposes its delivered credentials locally. Furthermore, Kubernetes `pods/create` and `pods/exec` permissions in the namespace can access secrets unless constrained by RBAC and admission policies.
+- The application pod requires zero AWS permissions, preventing direct AWS Secrets Manager API queries. However, the workload still receives the native Kubernetes Secret in its environment, meaning workload compromise exposes its delivered credentials locally. Furthermore, Kubernetes `pods/create` and `pods/exec` permissions in the namespace can access secrets unless constrained by RBAC and fine-grained admission policies (since Pod Security Standards govern execution posture, not Secret-reference authorization).
 
 ### Boundary 3: Synchronization vs. Runtime Adoption
 - ESO reconciling `SecretSynced=True` only confirms that the Kubernetes Secret `.data` field matches the external provider.

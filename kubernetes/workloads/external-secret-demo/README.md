@@ -42,7 +42,7 @@ kubernetes/workloads/external-secret-demo/
 - **Security Boundary Realities:**
   - Denying cloud IAM permissions prevents lateral AWS API traversal, but the application **still receives and accesses the Kubernetes Secret** delivered to its container.
   - Workload compromise exposes its own delivered credentials.
-  - Indirect access paths exist: identities with `pods/create` or `pods/exec` in the namespace can mount or inspect any secret unless restricted by Kubernetes RBAC and admission policies (e.g., Pod Security Standards).
+  - Indirect access paths exist: identities with `pods/create` or `pods/exec` in the namespace can mount or inspect any secret. Note that Kubernetes Pod Security Standards (PSS) enforce Pod security properties (e.g., non-root user, dropped capabilities), but do NOT restrict Secret references. Restricting Secret access requires namespace RBAC, workload authorization design, and fine-grained admission policies (e.g., Kyverno, Gatekeeper, ValidatingAdmissionPolicy).
 
 ### Namespaced Provider Scope & Tenant Isolation (`secretstore.yaml`)
 - Declares a namespaced `kind: SecretStore` rather than a cluster-wide `ClusterSecretStore`.

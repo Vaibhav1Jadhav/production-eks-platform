@@ -15,7 +15,7 @@ It strictly adheres to the repository's four-layer evidence taxonomy:
 | Parameter | Value |
 | :--- | :--- |
 | **Audit Date** | 2026-10-11 |
-| **Git Baseline** | Commit `cbb1d98` on branch `feat/26-external-secrets-management` (parent `23f3d8f` on `main`) |
+| **Git Baseline** | Branch `feat/26-external-secrets-management` (upstream baseline commit `7f8d612` on `main`) |
 | **Selected ESO Compatibility Baseline** | **External Secrets Operator v0.9.11** |
 | **CRD API Specification** | `external-secrets.io/v1beta1` (supported specification in ESO v0.9.11) |
 | **Host Operating System** | Windows 11 (PowerShell & Git Bash runtime) |
@@ -48,9 +48,9 @@ Every test is explicitly classified under the repository evidence taxonomy. Text
 | **Popeye Live Cluster Hygiene Scan** | Popeye v0.21.5 | `popeye -n sample-workloads` | Live cluster operational hygiene report | Skipped: Offline validation mode; no disposable cluster | **SKIP** | **SKIPPED** |
 | **Runtime Provider Authorization** | AWS STS / Secrets Manager | `aws secretsmanager get-secret-value ...` | IRSA token exchange retrieves secret | Skipped: Offline validation mode; zero cloud resources | **SKIP** | **SKIPPED** |
 | **Runtime ESO Reconciliation Loop** | ESO Controller | Controller reconcile event | Controller updates target Kubernetes Secret | Skipped: Offline validation mode; no live ESO controller | **SKIP** | **SKIPPED** |
-| **Runtime Workload Staleness Trap** | Linux Kernel / Kubelet | In-container process memory check | Process retains boot-time env var despite Secret update | Documented architectural invariant based on `execve()` | **PASS** | **DESIGNED** |
-| **Runtime Rolling Rollout Adoption** | Kubernetes Deployment Controller | `kubectl rollout restart deployment/...` | Replacement pods boot with updated secret | Documented architectural invariant based on Deployment controller | **PASS** | **DESIGNED** |
-| **Downstream Datastore Authentication** | Target Datastore (PostgreSQL) | Database client connection | Database verifies active credential | Documented limitation: requires live database infrastructure | **PASS** | **DESIGNED** |
+| **Runtime Workload Staleness Trap** | Linux Kernel / Kubelet | In-container process memory check | Process retains boot-time env var despite Secret update | Documented architectural invariant based on `execve()` | **DESIGN-ASSERTION** | **DESIGNED** |
+| **Runtime Rolling Rollout Adoption** | Kubernetes Deployment Controller | `kubectl rollout restart deployment/...` | Replacement pods boot with updated secret | Documented architectural invariant based on Deployment controller | **DESIGN-ASSERTION** | **DESIGNED** |
+| **Downstream Datastore Authentication** | Target Datastore (PostgreSQL) | Database client connection | Database verifies active credential | Documented limitation: requires live database infrastructure | **DESIGN-ASSERTION** | **DESIGNED** |
 | **Milestone #21 Regression Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 4) | Probes pass normal, startup delay, unready, deadlock | All probe simulation modes verified | **PASS** | **STATICALLY VALIDATED** |
 | **Milestone #22 Regression Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 5) | PDB formula `replicas (3) > minAvailable (2)` holds | Arithmetic lock and AlwaysAllow policy verified | **PASS** | **STATICALLY VALIDATED** |
 | **Milestone #23 Regression Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 8) | Multi-AZ `maxSkew: 1`, `DoNotSchedule`, selector | Verified topology spread constraints in sample-api | **PASS** | **STATICALLY VALIDATED** |
@@ -65,11 +65,12 @@ Every test is explicitly classified under the repository evidence taxonomy. Text
   - **Passed:** 27
   - **Failed:** 0
   - **Skipped:** 6 (Optional runtime checks requiring live cluster / CLI binaries)
-- **Four-Layer Evidence Matrix (Above):**
-  - **Total Checks:** 21
-  - **Passed (`PASS`):** 15 (11 `STATICALLY VALIDATED`, 4 `DESIGNED`)
-  - **Failed (`FAIL`):** 0
-  - **Skipped (`SKIP`):** 6 (`SKIPPED`)
+- **Four-Layer Evidence Matrix Classification:**
+  - **Total Items in Matrix:** 21
+  - **Executed Tests Passed (`PASS`):** 12 (All `STATICALLY VALIDATED` deterministic checks)
+  - **Executed Tests Failed (`FAIL`):** 0
+  - **Skipped Tests (`SKIP`):** 6 (`SKIPPED` due to offline environment, missing CRDs/tooling, or zero cloud resources)
+  - **Documented Design Assertions (`DESIGN-ASSERTION`):** 3 (`DESIGNED` platform behaviors; documented architectural models, explicitly NOT counted as executed test passes)
 
 ---
 
@@ -97,7 +98,7 @@ Every test is explicitly classified under the repository evidence taxonomy. Text
 
 ### Remaining Risks & Boundaries (To Be Evaluated on Live Cluster)
 1. **Workload Secret Access Reality:** Denying cloud IAM permissions prevents lateral AWS API traversal, but does **not** protect delivered Kubernetes Secrets if the workload container is compromised via RCE.
-2. **Indirect Access Paths:** Any identity with `pods/create` or `pods/exec` in the namespace can mount or extract secrets unless constrained by Kubernetes RBAC and admission policies (e.g., Pod Security Standards).
+2. **Indirect Access Paths & Admission Boundaries:** Any identity with `pods/create` or `pods/exec` in the namespace can mount or extract secrets. While Pod Security Standards (PSS) enforce Pod security properties (e.g., non-root user, capability drops), PSS does not restrict Secret references. Restricting Secret access requires namespace RBAC, workload authorization design, and fine-grained admission policies (e.g., Kyverno, Gatekeeper, ValidatingAdmissionPolicy).
 3. **Tenant Isolation Scope:** A namespaced `kind: SecretStore` provides a localized configuration scope, but complete multi-tenant isolation requires strict IAM policy resource scoping, RBAC governance, and admission controls.
 4. **Downstream Authentication Verification:** The demonstration container statically verifies environment table immutability. Verification of end-to-end database authentication requires live downstream infrastructure.
 5. **Single-Credential Systems:** Universal zero-downtime rotation cannot be guaranteed for downstream services that support only one active credential at a time.

@@ -112,7 +112,7 @@ flowchart TD
     ]
   }
   ```
-- **Boundary Truth:** If the IAM role trust policy does not match the exact ServiceAccount namespace and name, or if the role lacks `secretsmanager:GetSecretValue` on the specific secret ARN, ESO fails with `AccessDeniedException`. While workload application pods are denied access to this cloud IAM role, they still possess local access to the Kubernetes Secret delivered to their container. Compromise of the workload exposes its own delivered credentials, and namespace users with pod-creation or exec privileges can inspect secrets unless constrained by RBAC and admission policies.
+- **Boundary Truth:** If the IAM role trust policy does not match the exact ServiceAccount namespace and name, or if the role lacks `secretsmanager:GetSecretValue` on the specific secret ARN, ESO fails with `AccessDeniedException`. While workload application pods are denied access to this cloud IAM role, they still possess local access to the Kubernetes Secret delivered to their container. Compromise of the workload exposes its own delivered credentials, and namespace users with pod-creation or exec privileges can inspect secrets unless constrained by RBAC and fine-grained admission policies (as Pod Security Standards govern execution posture, not Secret-reference authorization).
 
 ---
 
