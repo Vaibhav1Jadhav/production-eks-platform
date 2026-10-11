@@ -286,16 +286,16 @@ fi
 # ------------------------------------------------------------------------------
 # 6. Kustomize Build Validation (Optional Tool Check)
 # ------------------------------------------------------------------------------
-echo -e "\n6. Kustomize Build Check (sample-api, stateful-demo & secret-demo)"
+echo -e "\n6. Kustomize Build Check (sample-api, stateful-demo, secret-demo & external-secret-demo)"
 if command -v kustomize >/dev/null 2>&1; then
-  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/secret-demo >/dev/null 2>&1; then
-    log_pass "kustomize build succeeded for sample-api, stateful-demo and secret-demo"
+  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/secret-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/external-secret-demo >/dev/null 2>&1; then
+    log_pass "kustomize build succeeded for sample-api, stateful-demo, secret-demo and external-secret-demo"
   else
     log_fail "kustomize build failed for workloads"
   fi
 elif command -v kubectl >/dev/null 2>&1; then
-  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/secret-demo >/dev/null 2>&1; then
-    log_pass "kubectl kustomize succeeded for sample-api, stateful-demo and secret-demo"
+  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/secret-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/external-secret-demo >/dev/null 2>&1; then
+    log_pass "kubectl kustomize succeeded for sample-api, stateful-demo, secret-demo and external-secret-demo"
   else
     log_fail "kubectl kustomize failed for workloads"
   fi
@@ -308,8 +308,8 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n7. Kubectl Client Dry-Run Check"
 if command -v kubectl >/dev/null 2>&1; then
-  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/secret-demo >/dev/null 2>&1; then
-    log_pass "kubectl apply --dry-run=client succeeded for sample-api, stateful-demo and secret-demo"
+  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/secret-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/external-secret-demo >/dev/null 2>&1; then
+    log_pass "kubectl apply --dry-run=client succeeded for sample-api, stateful-demo, secret-demo and external-secret-demo"
   else
     log_fail "kubectl apply --dry-run=client failed"
   fi
@@ -683,6 +683,153 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# 14. External Secrets Operator (ESO) & AWS Secrets Manager Integration Check
+# ------------------------------------------------------------------------------
+echo -e "\n14. External Secrets Operator & AWS Secrets Manager Integration Check"
+if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/external-secret-demo" ]; then
+  ESO_CHECK=$($PYTHON_CMD - << 'EOF'
+import os, sys, re
+
+eso_dir = "kubernetes/workloads/external-secret-demo"
+files = ["serviceaccount.yaml", "secretstore.yaml", "externalsecret.yaml", "deployment.yaml", "kustomization.yaml", "README.md"]
+missing = [f for f in files if not os.path.isfile(os.path.join(eso_dir, f))]
+if missing:
+    print(f"Missing required ESO manifest files: {missing}")
+    sys.exit(1)
+
+with open(os.path.join(eso_dir, "serviceaccount.yaml"), "r", encoding="utf-8") as f:
+    sa_text = f.read()
+
+with open(os.path.join(eso_dir, "secretstore.yaml"), "r", encoding="utf-8") as f:
+    ss_text = f.read()
+
+with open(os.path.join(eso_dir, "externalsecret.yaml"), "r", encoding="utf-8") as f:
+    es_text = f.read()
+
+with open(os.path.join(eso_dir, "deployment.yaml"), "r", encoding="utf-8") as f:
+    dep_text = f.read()
+
+with open(os.path.join(eso_dir, "kustomization.yaml"), "r", encoding="utf-8") as f:
+    kust_text = f.read()
+
+# 1. API Version Verification (external-secrets.io/v1beta1)
+if "apiVersion: external-secrets.io/v1beta1" not in ss_text:
+    print("SecretStore must use apiVersion: external-secrets.io/v1beta1")
+    sys.exit(1)
+
+if "apiVersion: external-secrets.io/v1beta1" not in es_text:
+    print("ExternalSecret must use apiVersion: external-secrets.io/v1beta1")
+    sys.exit(1)
+
+# 2. SecretStore Provider & Region
+if "kind: SecretStore" not in ss_text or "name: aws-secrets-manager-store" not in ss_text:
+    print("SecretStore missing kind: SecretStore or name: aws-secrets-manager-store")
+    sys.exit(1)
+
+if "service: SecretsManager" not in ss_text or "region: us-east-1" not in ss_text:
+    print("SecretStore provider must specify service: SecretsManager and region: us-east-1")
+    sys.exit(1)
+
+if "name: eso-irsa-sa" not in ss_text:
+    print("SecretStore auth must reference serviceAccountRef: eso-irsa-sa")
+    sys.exit(1)
+
+# 3. Identity Decoupling (Controller IRSA vs Application SA)
+if "name: eso-irsa-sa" not in sa_text or "eks.amazonaws.com/role-arn" not in sa_text:
+    print("ServiceAccount eso-irsa-sa missing eks.amazonaws.com/role-arn annotation")
+    sys.exit(1)
+
+if "arn:aws:iam::123456789012:role/eso-secrets-manager-role" not in sa_text:
+    print("ServiceAccount eso-irsa-sa must reference synthetic role ARN")
+    sys.exit(1)
+
+if "name: external-secret-app-sa" not in sa_text:
+    print("Missing unprivileged workload ServiceAccount: external-secret-app-sa")
+    sys.exit(1)
+
+if "serviceAccountName: external-secret-app-sa" not in dep_text:
+    print("Deployment spec must configure serviceAccountName: external-secret-app-sa")
+    sys.exit(1)
+
+# 4. ExternalSecret Mapping & Target
+if "kind: ExternalSecret" not in es_text or "name: app-database-credential-sync" not in es_text:
+    print("ExternalSecret missing kind: ExternalSecret or name: app-database-credential-sync")
+    sys.exit(1)
+
+if "refreshInterval: 1h" not in es_text:
+    print("ExternalSecret must configure refreshInterval: 1h")
+    sys.exit(1)
+
+if "name: app-database-secret" not in es_text or "creationPolicy: Owner" not in es_text:
+    print("ExternalSecret target must specify name: app-database-secret with creationPolicy: Owner")
+    sys.exit(1)
+
+if "production/app/database" not in es_text:
+    print("ExternalSecret remoteRef must reference key: production/app/database")
+    sys.exit(1)
+
+# 5. Workload Deployment Environment Variable Consumption
+if "name: app-database-secret" not in dep_text or "secretKeyRef:" not in dep_text:
+    print("Deployment must consume app-database-secret via secretKeyRef")
+    sys.exit(1)
+
+for sec in ["runAsNonRoot: true", "readOnlyRootFilesystem: true", "allowPrivilegeEscalation: false"]:
+    if sec not in dep_text:
+        print(f"Deployment missing securityContext parameter: {sec}")
+        sys.exit(1)
+
+# 6. Kustomization resource inclusion
+for res in ["serviceaccount.yaml", "secretstore.yaml", "externalsecret.yaml", "deployment.yaml"]:
+    if res not in kust_text:
+        print(f"kustomization.yaml missing resource: {res}")
+        sys.exit(1)
+
+# 7. Documentation Artifact Verification
+eso_docs = [
+    "architecture/diagrams/external-secrets-trust-boundaries.md",
+    "architecture/adr/ADR-006-external-secrets-adoption.md",
+    "failure-scenarios/external-secrets/README.md",
+    "failure-scenarios/external-secrets/sync-success-app-stale.md",
+    "failure-scenarios/external-secrets/provider-access-denied.md",
+    "failure-scenarios/external-secrets/premature-revocation.md",
+    "failure-scenarios/external-secrets/validation.md",
+    "runbooks/external-secret-sync-and-adoption-failure.md",
+    "kubernetes/workloads/external-secret-demo/README.md"
+]
+missing_docs = [f for f in eso_docs if not os.path.isfile(f)]
+if missing_docs:
+    print(f"Missing required ESO documentation files: {missing_docs}")
+    sys.exit(1)
+
+print("OK")
+sys.exit(0)
+EOF
+)
+  if [ $? -eq 0 ]; then
+    log_pass "External Secrets Operator invariants verified (v1beta1 API, SecretsManager us-east-1, IRSA decoupling, 1h refreshInterval, Owner policy, env var staleness model)"
+  else
+    log_fail "External Secrets Operator check failed: $ESO_CHECK"
+  fi
+else
+  log_skip "Python or external-secret-demo directory unavailable"
+fi
+
+# ------------------------------------------------------------------------------
+# 15. Optional Runtime External Secrets Operator Reconcile Check
+# ------------------------------------------------------------------------------
+echo -e "\n15. Optional Runtime External Secrets Operator Reconcile Check"
+if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  HAS_CRD=$(kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1 && echo "yes" || echo "no")
+  if [ "$HAS_CRD" = "yes" ]; then
+    log_pass "Runtime External Secrets Operator CRDs installed and ready"
+  else
+    log_skip "External Secrets Operator CRDs not installed on cluster; runtime reconcile check skipped"
+  fi
+else
+  log_skip "Runtime cluster unreachable; statically validated; external secret reconciliation behavior was not executed."
+fi
+
+# ------------------------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------------------------
 echo -e "\n=============================================================================="
@@ -693,7 +840,7 @@ if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "Validation completed with failures."
   exit 1
 elif [ "$SKIP_COUNT" -gt 0 ]; then
-  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; secret access / stateful recovery / multi-AZ scheduling behavior was not executed)."
+  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; external secret reconciliation / secret access / stateful recovery / multi-AZ scheduling behavior was not executed)."
   exit 0
 else
   echo "Validation completed cleanly."

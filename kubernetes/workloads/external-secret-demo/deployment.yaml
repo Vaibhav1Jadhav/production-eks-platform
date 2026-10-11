@@ -1,0 +1,124 @@
+# ==============================================================================
+# Workload Deployment: Demonstrating the Environment-Variable Staleness Boundary
+# ==============================================================================
+# This workload consumes credentials from the ESO-synchronized Secret 'app-database-secret'
+# via environment variables (valueFrom.secretKeyRef).
+#
+# ARCHITECTURAL FAILURE BOUNDARY DEMONSTRATED:
+# When AWS Secrets Manager rotates the credential, ESO reconciles and mutates
+# the target Kubernetes Secret 'app-database-secret'.
+# However, because the Linux kernel evaluates environment variables once during
+# container startup (execve), running processes CANNOT observe the updated credential.
+# The container process continues running with the stale, revoked boot-time credential
+# until an operator triggers a rolling restart:
+#   kubectl rollout restart deployment/external-secret-demo -n sample-workloads
+#
+# Contrast with Volume Projection:
+# A projected volume mount (/etc/secrets/...) updates files on tmpfs via symlink swap,
+# but running applications still require inotify file watchers or rollouts to update RAM.
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-secret-demo
+  namespace: sample-workloads
+  labels:
+    app.kubernetes.io/name: external-secret-demo
+    app.kubernetes.io/instance: external-secret-reference
+    app.kubernetes.io/component: credential-consumer
+    app.kubernetes.io/part-of: production-eks-platform
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: external-secret-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: external-secret-demo
+        app.kubernetes.io/instance: external-secret-reference
+        app.kubernetes.io/component: credential-consumer
+        app.kubernetes.io/part-of: production-eks-platform
+        app.kubernetes.io/version: "1.0.0"
+    spec:
+      serviceAccountName: external-secret-app-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: app-consumer
+          image: busybox:1.36.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              echo "app-consumer booted. Reading environment table credentials..."
+              if [ -z "$DB_PASSWORD" ]; then
+                echo "CRITICAL: DB_PASSWORD environment variable is empty."
+                exit 1
+              fi
+              PASS_LEN=$(echo -n "$DB_PASSWORD" | wc -c | tr -d ' ')
+              PASS_FP=$(echo -n "$DB_PASSWORD" | sha256sum | cut -c1-8)
+              echo "Process initialized. User: ${DB_USERNAME}, Password length: ${PASS_LEN}B, Fingerprint: ${PASS_FP}..."
+              while true; do
+                CURRENT_FP=$(echo -n "$DB_PASSWORD" | sha256sum | cut -c1-8)
+                echo "Worker active. Process PID: $$, Active Fingerprint: ${CURRENT_FP}..., Status: AUTH_ESTABLISHED"
+                sleep 30
+              done
+
+          env:
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: app-database-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-database-secret
+                  key: password
+
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+
+          readinessProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-c"
+                - "[ -n \"$DB_PASSWORD\" ]"
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+
+          livenessProbe:
+            exec:
+              command:
+                - "/bin/sh"
+                - "-c"
+                - "[ -n \"$DB_PASSWORD\" ]"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
