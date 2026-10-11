@@ -46,8 +46,8 @@ We must select an external secrets architecture that provides automated synchron
 
 We establish the following architectural policies for External Secrets Management:
 
-### 1. Standardize on External Secrets Operator (ESO) v0.9.11+ / v0.10.x
-We adopt the **External Secrets Operator (ESO)** with the `external-secrets.io/v1beta1` API specification:
+### 1. Standardize on External Secrets Operator (ESO) v0.9.11
+We adopt **External Secrets Operator (ESO) v0.9.11** with the `external-secrets.io/v1beta1` CRD API specification:
 - Operates as a declarative, in-cluster Kubernetes controller that reconciles external provider state into native Kubernetes Secret objects.
 - Uses AWS Secrets Manager as the authoritative cloud secret store.
 - Supports configurable polling and reconciliation intervals (`refreshInterval: 1h`) to detect upstream credential rotations.
@@ -55,19 +55,31 @@ We adopt the **External Secrets Operator (ESO)** with the `external-secrets.io/v
 ### 2. Isolate Controller Identity from Workload Identity via EKS IRSA
 - The ESO controller authenticates to AWS Secrets Manager using **IAM Roles for Service Accounts (IRSA)** or **EKS Pod Identity**.
 - The dedicated controller ServiceAccount (`eso-irsa-sa`) is annotated with the IAM Role ARN.
-- Workload application pods use an unprivileged ServiceAccount (`external-secret-app-sa`) that possesses **zero AWS IAM permissions** and **zero Kubernetes API secret permissions**. Workloads never interact directly with AWS Secrets Manager or the Kubernetes Secret API.
+- Workload application pods use an unprivileged ServiceAccount (`external-secret-app-sa`) that possesses **zero AWS IAM permissions**, preventing workloads from querying cloud provider APIs directly.
+- **Access Boundary Realities:**
+  - Removing AWS IAM permissions prevents cloud API traversal, but does **not** prevent compromise of the Kubernetes Secret delivered to the workload container. If the workload is compromised (e.g. via RCE), its delivered credentials can still be exfiltrated.
+  - Identities with pod creation or exec permissions (`pods/create`, `pods/exec`) in the namespace can mount or extract secrets. Complete isolation requires combining IAM scoping, namespace RBAC, and admission controls.
 
 ### 3. Enforce Namespaced `SecretStore` Boundaries
 - Workloads must use namespaced `kind: SecretStore` resources rather than cluster-wide `ClusterSecretStore` resources, unless multi-tenant sharing is explicitly approved.
-- A namespaced `SecretStore` isolates external secret access to the specific namespace, preventing cross-tenant exfiltration across workload boundaries.
+- A namespaced `SecretStore` establishes a localized configuration scope within the namespace.
+- **Tenant Isolation Nuance:** A namespaced store does not independently guarantee complete tenant isolation. Effective multi-tenant isolation requires coordinated enforcement of AWS IAM policy scoping on the projected IRSA role, Kubernetes RBAC governing `secrets` and `externalsecrets`, admission policies, and node/workload isolation.
 
 ### 4. Require Declarative `ExternalSecret` with Owner Policy
 - `ExternalSecret` manifests explicitly declare `spec.target.creationPolicy: Owner`. If the `ExternalSecret` is deleted, its generated Kubernetes Secret is garbage-collected.
 - Credentials map directly to specific JSON properties or raw strings using `spec.data[].remoteRef`.
 
-### 5. Mandate Deployment Rollouts for Credential Adoption
+### 5. Mandate Deployment Rollouts & Qualify Dual-Credential Strategy
 - Because process environment variables are immutable at runtime, and in-memory application connection pools do not automatically reload, **credential rotation is not complete upon Secret synchronization**.
-- Production pipelines and operators must execute a controlled rolling restart (`kubectl rollout restart deployment/<name>`) or use automated rollout controllers (such as Stakater Reloader) to ensure that replacement pods boot with the new credential before the old credential is revoked at the authoritative datastore.
+- **The Complete 7-Step Rotation Lifecycle:**
+  1. *Authoritative credential update:* Upstream secret updated in AWS Secrets Manager.
+  2. *ESO reconciliation:* Controller polls provider and detects changed version.
+  3. *Kubernetes Secret update:* Local `kind: Secret` updated in etcd and cluster memory.
+  4. *Workload delivery:* Updated secret reflected via pod filesystem mount or queued for next pod creation.
+  5. *Application adoption:* Workload reloads configuration (via rolling restart or file watcher).
+  6. *Downstream authentication verification:* Workload verifies valid connection to downstream datastore.
+  7. *Old credential revocation:* Previous credential revoked at datastore with rollback/recovery contingency.
+- **Rotation Strategy Qualification:** A dual-credential overlap period is the preferred strategy **when the downstream system supports simultaneous valid credentials** (e.g., dual database users or staged API keys). Where only one active credential is supported, teams must accept coordinated downtime, synchronized rolling deployments with exponential retry backoff, or temporary maintenance windows; zero-downtime rotation cannot be guaranteed universally.
 
 ---
 
@@ -98,7 +110,7 @@ We adopt the **External Secrets Operator (ESO)** with the `external-secrets.io/v
 
 ### Boundary 2: Controller IAM vs. Workload Identity
 - ESO requires `secretsmanager:GetSecretValue` and `secretsmanager:DescribeSecret` scoped strictly to target secret ARNs (`production/app/database-*`).
-- The application pod requires zero AWS permissions. If a workload container is compromised via RCE, the attacker cannot query AWS Secrets Manager directly.
+- The application pod requires zero AWS permissions, preventing direct AWS Secrets Manager API queries. However, the workload still receives the native Kubernetes Secret in its environment, meaning workload compromise exposes its delivered credentials locally. Furthermore, Kubernetes `pods/create` and `pods/exec` permissions in the namespace can access secrets unless constrained by RBAC and admission policies.
 
 ### Boundary 3: Synchronization vs. Runtime Adoption
 - ESO reconciling `SecretSynced=True` only confirms that the Kubernetes Secret `.data` field matches the external provider.
@@ -158,4 +170,4 @@ flowchart TD
 1. **Controller Dependency:** The platform introduces the External Secrets Operator as a critical cluster dependency. If the ESO controller crashes, existing secrets remain, but rotations stop reconciling.
 2. **Sync Latency Window:** Credential changes in AWS are not instantaneous; they propagate according to `spec.refreshInterval` (e.g., up to 1 hour unless manually triggered).
 3. **Adoption Responsibility:** The platform must enforce rolling deployment rollouts on rotation. Updating the Kubernetes Secret does not update running application memory or process environment variables.
-4. **Revocation Discipline:** Teams must enforce a dual-credential overlap window at the authoritative database to prevent outages while pods cycle.
+4. **Revocation Discipline:** Teams should enforce a dual-credential overlap window at the authoritative database whenever simultaneous valid credentials are supported; for single-credential systems, teams must plan coordinated maintenance windows or brief rotation restart cycles to prevent outages while pods cycle.

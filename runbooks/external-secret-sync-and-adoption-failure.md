@@ -40,7 +40,7 @@ Question 7: Has the running application process been restarted to adopt the new 
 (Compare Pod startTime against Secret creationTimestamp / rollout restart status)
         ↓
 Question 8: Does the database accept the new credential?
-(Verify upstream database user status and dual-credential window)
+(Verify upstream database user status and dual-credential overlap window or single-credential rollback)
 ```
 
 ---
@@ -180,4 +180,4 @@ If the pod booted with the new credential but authentication still fails:
 | **Sync Interval Delay** | ExternalSecret shows old data for up to 1h | Default `refreshInterval: 1h` has not elapsed since cloud update. | Annotate ExternalSecret with `force-sync=$(date +%s)`. | **Low:** Forces immediate reconciliation loop without waiting for next poll. |
 | **Environment Staleness** | DB auth failure after successful sync | Workload uses `env[].valueFrom.secretKeyRef`; Linux environment table is frozen. | Execute `kubectl rollout restart deployment/external-secret-demo`. | **Medium:** Causes rolling pod restart across all replicas. Ensure PDB permits disruption to avoid transient 5xx errors. |
 | **In-Memory Pool Caching** | DB auth failure on volume mount | App read volume file at boot into static RAM pool; never re-reads disk. | Execute `kubectl rollout restart deployment/external-secret-demo`. | **Medium:** Cycles all pod replicas. Guarantees fresh connection pool initialization. |
-| **Premature Revocation** | Immediate 100% auth failure across cluster | DB admin revoked old password before ESO synced or pods restarted. | Temporarily re-enable old password on DB cluster until rollout completes. | **High Emergency:** Restores production availability immediately; re-attempt rotation with a dual-credential overlap window. |
+| **Premature Revocation** | Immediate 100% auth failure across cluster | DB admin revoked old password before ESO synced or pods restarted. | Temporarily re-enable old password on DB cluster until rollout completes. | **High Emergency:** Restores production availability immediately; re-attempt rotation with a dual-credential overlap window (if supported) or planned coordination. |

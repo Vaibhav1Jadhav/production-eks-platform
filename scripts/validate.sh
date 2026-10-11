@@ -768,7 +768,7 @@ if "production/app/database" not in es_text:
     print("ExternalSecret remoteRef must reference key: production/app/database")
     sys.exit(1)
 
-# 5. Workload Deployment Environment Variable Consumption
+# 5. Workload Deployment Environment Variable Consumption & Non-Sensitive Signals
 if "name: app-database-secret" not in dep_text or "secretKeyRef:" not in dep_text:
     print("Deployment must consume app-database-secret via secretKeyRef")
     sys.exit(1)
@@ -778,13 +778,43 @@ for sec in ["runAsNonRoot: true", "readOnlyRootFilesystem: true", "allowPrivileg
         print(f"Deployment missing securityContext parameter: {sec}")
         sys.exit(1)
 
-# 6. Kustomization resource inclusion
+if "SYNTHETIC_AUTH_ESTABLISHED" not in dep_text or "BOOT_TIME=" not in dep_text:
+    print("Deployment must use non-sensitive operational signals (SYNTHETIC_AUTH_ESTABLISHED, BOOT_TIME)")
+    sys.exit(1)
+
+for forbidden in ["sha256sum", "wc -c", "cut -c"]:
+    if forbidden in dep_text:
+        print(f"Deployment contains forbidden credential-derived logging mechanism: {forbidden}")
+        sys.exit(1)
+
+# 6. IAM Policy JSON Syntax & Scoping Verification
+import json
+with open("architecture/diagrams/external-secrets-trust-boundaries.md", "r", encoding="utf-8") as f:
+    tb_text = f.read()
+
+json_match = re.search(r'```json\s*(\{.*?\})\s*```', tb_text, re.DOTALL)
+if not json_match:
+    print("Missing IAM policy JSON block in external-secrets-trust-boundaries.md")
+    sys.exit(1)
+
+try:
+    iam_policy = json.loads(json_match.group(1))
+except Exception as e:
+    print(f"IAM policy JSON in external-secrets-trust-boundaries.md is invalid: {e}")
+    sys.exit(1)
+
+resource = iam_policy.get("Statement", [{}])[0].get("Resource", "")
+if resource == "*" or not resource.startswith("arn:aws:secretsmanager:"):
+    print("IAM policy must not use wildcard Resource: *; must be scoped to secret ARN")
+    sys.exit(1)
+
+# 7. Kustomization resource inclusion
 for res in ["serviceaccount.yaml", "secretstore.yaml", "externalsecret.yaml", "deployment.yaml"]:
     if res not in kust_text:
         print(f"kustomization.yaml missing resource: {res}")
         sys.exit(1)
 
-# 7. Documentation Artifact Verification
+# 8. Documentation Artifact Verification
 eso_docs = [
     "architecture/diagrams/external-secrets-trust-boundaries.md",
     "architecture/adr/ADR-006-external-secrets-adoption.md",

@@ -109,14 +109,24 @@ $$
 
 ## 6. Resolution & Prevention
 
-### Prevention: Dual-Credential Policy
-For stateful databases supporting multiple active user passwords (e.g., PostgreSQL, MySQL, MongoDB, AWS IAM):
-1. **Provision New Password:** Add the new password hash to the user record alongside the existing password.
-2. **Synchronize Cloud:** Update AWS Secrets Manager.
-3. **Verify ESO Synchronization:** Confirm `ExternalSecret` reports `SecretSynced` and check that `app-database-secret` contains the new checksum.
-4. **Execute Rolling Rollout:** Run `kubectl rollout restart deployment/external-secret-demo -n sample-workloads`.
-5. **Verify Telemetry:** Monitor database authentication logs for 24 hours to confirm zero queries are utilizing `v1`.
-6. **Revoke Old Password:** Decommission `v1` at the database.
+### Prevention: Credential Strategy by System Capability
+
+#### Strategy A: Dual-Credential Overlap Window (Preferred When Supported)
+When the downstream system supports concurrent valid credentials (e.g., dual database user accounts, secondary API keys, or staged IAM access keys):
+1. **Authoritative Credential Update:** Provision the new credential in the downstream system and update AWS Secrets Manager (`production/app/database`), keeping the old credential valid.
+2. **ESO Reconciliation:** Verify `ExternalSecret` transitions to `Ready: True` / `SecretSynced`.
+3. **Kubernetes Secret Update:** Verify `app-database-secret` in etcd reflects an incremented `resourceVersion`.
+4. **Workload Delivery & Application Adoption:** Execute a controlled rolling rollout (`kubectl rollout restart deployment/external-secret-demo -n sample-workloads`) so replacement pods boot with the new credential.
+5. **Downstream Authentication Verification:** Monitor application telemetry to confirm 100% of replicas successfully authenticate using the new credential.
+6. **Old Credential Revocation:** Decommission the old credential at the downstream system only after the verification period concludes.
+
+#### Strategy B: Single-Credential Systems (Coordination Trade-offs)
+Where the downstream system strictly supports only **one** active credential at a time:
+- Universal zero-downtime rotation **cannot** be guaranteed.
+- **Trade-off Analysis:**
+  - *Option 1: Planned Maintenance Window:* Temporarily redirect ingress traffic or announce a scheduled maintenance window during credential swap and pod rollouts.
+  - *Option 2: Synchronized Rollout with Retry Backoff:* Update the database credential and AWS Secrets Manager simultaneously, trigger an immediate emergency ESO refresh (`kubectl annotate es <name> force-sync=...`), and rollout pods while client libraries execute exponential connection retry backoff.
+  - *Acceptance:* Transient connection rejection occurs while running pods terminate and replacement pods initialize.
 
 ### Emergency Recovery: If Premature Revocation Occurs
 If an upstream credential is inadvertently dropped before workloads transition:

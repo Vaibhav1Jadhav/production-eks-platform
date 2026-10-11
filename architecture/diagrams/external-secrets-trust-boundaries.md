@@ -112,13 +112,14 @@ flowchart TD
     ]
   }
   ```
-- **Boundary Truth:** If the IAM role trust policy does not match the exact ServiceAccount namespace and name, or if the role lacks `secretsmanager:GetSecretValue` on the specific secret ARN, ESO fails with `AccessDeniedException`. Workload application pods are completely isolated from this IAM role.
+- **Boundary Truth:** If the IAM role trust policy does not match the exact ServiceAccount namespace and name, or if the role lacks `secretsmanager:GetSecretValue` on the specific secret ARN, ESO fails with `AccessDeniedException`. While workload application pods are denied access to this cloud IAM role, they still possess local access to the Kubernetes Secret delivered to their container. Compromise of the workload exposes its own delivered credentials, and namespace users with pod-creation or exec privileges can inspect secrets unless constrained by RBAC and admission policies.
 
 ---
 
 ### Boundary 3: The Reconciliation Loop (`SecretStore` & `ExternalSecret`)
 - **Location:** Kubernetes Control Plane (`kube-apiserver` & ESO Controller).
 - **Responsibility:** Evaluates `ExternalSecret` specifications against the configured `SecretStore`.
+- **Tenant Scope:** A namespaced `kind: SecretStore` establishes a localized configuration scope within `sample-workloads`. It does not independently guarantee complete multi-tenant isolation without corresponding IAM policy resource scoping, RBAC governance, and workload admission controls.
 - **Reconciliation Invariants:**
   - `SecretStore` defines the connection parameters (AWS service, region, authentication reference).
   - `ExternalSecret` defines the refresh cadence (`refreshInterval: 1h`), the target Kubernetes Secret name (`target.name`), and the mapping from external keys to secret keys.
@@ -161,7 +162,9 @@ flowchart TD
 - **The Premature Revocation Hazard:**
   - **Rotation** is the introduction and propagation of a new credential.
   - **Revocation** is the deactivation of the old credential.
-  - If a database administrator revokes the old password before:
+  - An overlap period where both old and new credentials remain valid is the preferred strategy **when the downstream service supports simultaneous valid credentials**.
+  - In single-credential environments where simultaneous credentials cannot be maintained, teams must coordinate planned maintenance or synchronized rolling updates with connection retry logic; universal zero-downtime rotation cannot be promised.
+  - If an upstream operator revokes the old password before:
     1. ESO completes its reconciliation loop, AND
     2. All application pods complete a rolling restart,
   - **Result:** Every active pod in the cluster immediately enters an authentication failure storm (`FATAL: password authentication failed`), triggering cascading 500 errors and CrashLoopBackOff states.
@@ -173,4 +176,4 @@ flowchart TD
 1. **ExternalSecret `SecretSynced=True` does NOT prove the app is using the new password.** It only proves the Kubernetes Secret object in etcd has been updated.
 2. **Kubernetes Secret `.data` updated does NOT prove the running container has seen it.** If delivered via environment variables, `/proc/$PID/environ` remains frozen to the boot-time value.
 3. **Mounted volume file updated does NOT prove application RAM has reloaded it.** In-memory database pools continue authenticating with the old password until an internal reload or pod restart occurs.
-4. **Never revoke an old credential upstream until 100% of workload replicas have completed a verified rolling rollout under the new credential.**
+4. **Where simultaneous valid credentials are supported, maintain a dual-credential overlap window until 100% of workload replicas complete a verified rolling rollout under the new credential before revoking the old credential.** For single-credential systems, plan coordinated rollout windows.

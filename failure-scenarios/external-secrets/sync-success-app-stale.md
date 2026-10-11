@@ -87,39 +87,39 @@ The controller succeeded. The Kubernetes Secret object in etcd contains the new 
 
 ## 4. Evidence (Diagnostic Walkthrough)
 
-To diagnose why the application is failing despite a successful synchronization, the operator inspects the container process table directly:
+To diagnose why the application is failing despite a successful synchronization, the operator compares the running container process initialization timestamp against the Kubernetes Secret mutation timestamp (strictly without printing credential values, lengths, or hashes):
 
 ```bash
 POD_NAME=$(kubectl get pods -n sample-workloads -l app.kubernetes.io/name=external-secret-demo -o jsonpath='{.items[0].metadata.name}')
 
-# Safe check: inspect the password fingerprint in process memory (suppressing raw strings)
-kubectl exec -n sample-workloads "$POD_NAME" -- /bin/sh -c '
-  echo -n "Environment variable fingerprint: "
-  echo -n "$DB_PASSWORD" | sha256sum | cut -c1-8
-'
+# 1. Non-sensitive check: inspect the process startup timestamp from container logs
+kubectl logs -n sample-workloads "$POD_NAME" --tail=2
 ```
 
 *Illustrative Output:*
 ```text
-Environment variable fingerprint: 0a69a239
+app-consumer process booted at 2026-10-11T08:00:00Z. Workload revision: 1.0.0. Source: app-database-secret.
+Worker active. Process PID: 1, Boot time: 2026-10-11T08:00:00Z, Cycle: 60, Status: SYNTHETIC_AUTH_ESTABLISHED
 ```
 
-Next, the operator inspects the cryptographic fingerprint of the updated Kubernetes Secret object:
+Next, the operator checks the mutation timestamp and resourceVersion of the updated Kubernetes Secret:
 
 ```bash
-kubectl get secret app-database-secret -n sample-workloads -o jsonpath='{.data.password}' | base64 --decode | sha256sum | cut -c1-8
+kubectl get secret app-database-secret -n sample-workloads -o jsonpath='{.metadata.resourceVersion} {"\n"} {.metadata.creationTimestamp} {"\n"}'
 ```
 
 *Illustrative Output:*
 ```text
-c47e8b91
+98124
+2026-10-11T08:30:00Z
 ```
 
 **The Discrepancy Revealed:**
-- **Kubernetes Secret in etcd:** Fingerprint `c47e8b91...` (New credential, v2).
-- **Running Container Process:** Fingerprint `0a69a239...` (Old credential, v1).
+- **Kubernetes Secret in etcd:** Mutated at `08:30:00Z` (Incremented to `resourceVersion: 98124`, holding v2 credentials).
+- **Running Container Process:** Initialized at `08:00:00Z` (Booted 30 minutes *before* secret rotation).
+- **Process Environment Table:** Frozen at container `execve()` time (`08:00:00Z`).
 
-The running container is executing with the stale, revoked boot-time credential!
+The running container is executing with the stale, revoked boot-time credential environment table! Neither the secret value nor any hash or length was emitted to verify this condition.
 
 ---
 
@@ -190,36 +190,38 @@ Waiting for deployment "external-secret-demo" rollout to finish: 1 out of 2 new 
 deployment "external-secret-demo" successfully rolled out
 ```
 
-### Step 2: Verify Credential Adoption (Independent Verification)
-Verify that the new running process has adopted the updated fingerprint:
+### Step 2: Verify Credential Adoption (Independent Operational Signal)
+Verify that the new running process booted *after* the secret was mutated in etcd:
 
 ```bash
 NEW_POD=$(kubectl get pods -n sample-workloads -l app.kubernetes.io/name=external-secret-demo -o jsonpath='{.items[0].metadata.name}')
 
-kubectl exec -n sample-workloads "$NEW_POD" -- /bin/sh -c '
-  echo -n "New process fingerprint: "
-  echo -n "$DB_PASSWORD" | sha256sum | cut -c1-8
-'
+kubectl logs -n sample-workloads "$NEW_POD" --tail=2
 ```
 
 *Illustrative Output:*
 ```text
-New process fingerprint: c47e8b91
+app-consumer process booted at 2026-10-11T08:35:00Z. Workload revision: 1.0.0. Source: app-database-secret.
+Worker active. Process PID: 1, Boot time: 2026-10-11T08:35:00Z, Cycle: 1, Status: SYNTHETIC_AUTH_ESTABLISHED
 ```
 
-The running container memory matches the current secret fingerprint (`c47e8b91...`).
+The new process boot timestamp (`08:35:00Z`) postdates the secret mutation timestamp (`08:30:00Z`), confirming the new container initialized its environment table against the updated secret without emitting any credential data.
 
-### Step 3: Verify Downstream Authentication
-Confirm from application logs that database queries are succeeding:
+### Step 3: Verify Downstream Authentication (Application Boundary)
+Confirm from application logs that synthetic authentication or downstream connectivity is established:
 
 ```bash
-kubectl logs -n sample-workloads "$NEW_POD" --tail=5
+kubectl logs -n sample-workloads "$NEW_POD" --tail=1
 ```
 
 *Illustrative Output:*
 ```text
-Worker active. Process PID: 1, Active Fingerprint: c47e8b91..., Status: AUTH_ESTABLISHED
+Worker active. Process PID: 1, Boot time: 2026-10-11T08:35:00Z, Cycle: 2, Status: SYNTHETIC_AUTH_ESTABLISHED
 ```
+
+> [!NOTE]
+> **Demonstration Boundary Limitation:** The demo workload verifies container process adoption and environment variable immutability using non-sensitive operational logs. Live downstream database authentication requires a target database instance.
+
 
 ---
 

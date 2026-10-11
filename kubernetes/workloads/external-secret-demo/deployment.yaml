@@ -59,17 +59,19 @@ spec:
             - "/bin/sh"
             - "-c"
             - |
-              echo "app-consumer booted. Reading environment table credentials..."
-              if [ -z "$DB_PASSWORD" ]; then
-                echo "CRITICAL: DB_PASSWORD environment variable is empty."
+              BOOT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+              WORKLOAD_REVISION="1.0.0"
+              SECRET_REF="app-database-secret"
+              echo "app-consumer process booted at ${BOOT_TIME}. Workload revision: ${WORKLOAD_REVISION}. Source: ${SECRET_REF}."
+              if [ -z "$DB_PASSWORD" ] || [ -z "$DB_USERNAME" ]; then
+                echo "CRITICAL: Required database credential environment variables missing or empty."
                 exit 1
               fi
-              PASS_LEN=$(echo -n "$DB_PASSWORD" | wc -c | tr -d ' ')
-              PASS_FP=$(echo -n "$DB_PASSWORD" | sha256sum | cut -c1-8)
-              echo "Process initialized. User: ${DB_USERNAME}, Password length: ${PASS_LEN}B, Fingerprint: ${PASS_FP}..."
+              echo "Process initialized. User identity: ${DB_USERNAME}. Secret presence: VERIFIED (non-sensitive check). Status: READY."
+              CYCLE=1
               while true; do
-                CURRENT_FP=$(echo -n "$DB_PASSWORD" | sha256sum | cut -c1-8)
-                echo "Worker active. Process PID: $$, Active Fingerprint: ${CURRENT_FP}..., Status: AUTH_ESTABLISHED"
+                echo "Worker active. Process PID: $$, Boot time: ${BOOT_TIME}, Cycle: ${CYCLE}, Status: SYNTHETIC_AUTH_ESTABLISHED"
+                CYCLE=$((CYCLE + 1))
                 sleep 30
               done
 
@@ -106,7 +108,7 @@ spec:
               command:
                 - "/bin/sh"
                 - "-c"
-                - "[ -n \"$DB_PASSWORD\" ]"
+                - "[ -n \"$DB_PASSWORD\" ] && [ -n \"$DB_USERNAME\" ]"
             initialDelaySeconds: 2
             periodSeconds: 5
             timeoutSeconds: 2
@@ -117,7 +119,7 @@ spec:
               command:
                 - "/bin/sh"
                 - "-c"
-                - "[ -n \"$DB_PASSWORD\" ]"
+                - "[ -n \"$DB_PASSWORD\" ] && [ -n \"$DB_USERNAME\" ]"
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 2
