@@ -183,7 +183,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 
 | Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| **#25** | Kubernetes Secrets — Base64 ≠ Secret Management | *"Who Can Retrieve the Credential, Where Does It Live, and Where Can It Leak?"* | **Implementation available** *(LinkedIn publication pending)* | [Workload Manifests](kubernetes/workloads/secret-demo/) • [ADR-005](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md) • [Secret Trust-Boundary Flow](architecture/diagrams/secret-trust-boundary-flow.md) • [Runbook](runbooks/secret-access-and-delivery-failure.md) • [Failure Scenarios](failure-scenarios/secrets/) |
+| **#25** | Kubernetes Secrets — Base64 ≠ Secret Management | *"Who Can Retrieve the Credential, Where Does It Live, and Where Can It Leak?"* | **Implementation available** *(LinkedIn publication pending)* | [Workload Manifests](kubernetes/workloads/secret-demo/) • [ADR-005](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md) • [Secret Trust-Boundary Flow](architecture/diagrams/secret-trust-boundary-flow.md) • [Runbook](runbooks/secret-access-and-delivery-failure.md) • [Failure Scenarios](failure-scenarios/secrets/) • [Validation Evidence](failure-scenarios/secrets/validation.md) |
 
 ---
 

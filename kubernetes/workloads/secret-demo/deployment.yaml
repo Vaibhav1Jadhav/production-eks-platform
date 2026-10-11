@@ -23,6 +23,8 @@ spec:
         app.kubernetes.io/part-of: production-eks-platform
         app.kubernetes.io/version: "1.0.0"
     spec:
+      # Workload identity. Note: Kubelet volume mount retrieval operates via node identity;
+      # secret-demo-sa and its bound Role are used when in-pod code queries the kube-apiserver directly.
       serviceAccountName: secret-demo-sa
       securityContext:
         runAsNonRoot: true

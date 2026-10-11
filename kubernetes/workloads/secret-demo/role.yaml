@@ -8,7 +8,13 @@ metadata:
     app.kubernetes.io/component: rbac-authorization
     app.kubernetes.io/part-of: production-eks-platform
 rules:
-  # Least-privilege authorization boundary:
+  # Architecture Note (Direct API vs Volume Mount Delivery):
+  # A Pod consuming Secrets solely via projected volume mounts (as in deployment.yaml)
+  # or environment variables does NOT require in-pod ServiceAccount RBAC to get Secrets.
+  # The kubelet node daemon retrieves projected Secrets using node identity and Node authorization.
+  # This Role governs in-cluster API calls (e.g. SDK or automated clients querying kube-apiserver).
+  #
+  # Least-privilege authorization boundary for API clients:
   # 1. Scoped to the individual named secret demo-app-secret via resourceNames.
   # 2. Restricted to verb get only. Does not grant collection verbs (such as list or watch), which would
   #    allow enumerating and inspecting other secrets within the sample-workloads namespace.
