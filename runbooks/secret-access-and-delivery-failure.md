@@ -32,17 +32,23 @@ Question 1: Which ServiceAccount identity is the workload using?
 Question 2: Does the target Secret object exist in the namespace?
 (kubectl get secret <secret-name> -n sample-workloads)
         ↓
-Question 3: Does the identity have RBAC authorization to retrieve the Secret?
-(kubectl auth can-i get secret/<secret-name> --as=... -n sample-workloads)
+Question 3: Access Mode Branch: Is delivery via Volume Mount or Direct API Query?
+├─ If Direct In-Pod API: Does the ServiceAccount have RBAC authorization?
+│  (kubectl auth can-i get secret/<secret-name> --as=... -n sample-workloads)
+└─ If Volume Mount / Env Var: Kubelet handles retrieval. Was Pod admission rejected?
+   (kubectl describe pod <pod> -> Check admission webhook rejections)
         ↓
 Question 4: Did the kubelet successfully mount the Secret volume on tmpfs?
 (kubectl describe pod <pod> -> Events: FailedMount, MountVolume.SetUp failed)
         ↓
 Question 5: Can the non-root container process read the mounted file permissions?
-(ls -l /etc/secrets/... -> defaultMode: 0400 vs container UID/GID)
+(ls -l /etc/secrets/... -> defaultMode: 0400 vs container UID/GID / fsGroup)
         ↓
 Question 6: Did the Secret rotate, leaving the application process with a stale in-memory key?
 (File timestamp vs process start time vs database auth errors)
+        ↓
+Question 7: Is the upstream authoritative credential valid at the target service?
+(Verify whether the password works directly against the target database/API)
 ```
 
 ---
@@ -78,9 +84,14 @@ kubectl get secret demo-app-secret -n sample-workloads
 
 ---
 
-### Question 3: Does the Identity Have RBAC Authorization?
+### Question 3: Access Mode Branch: Volume Mount vs. Direct API Query
 
-Evaluate the RBAC authorization boundary using `kubectl auth can-i`:
+> [!IMPORTANT]
+> **Dual-Track Access Boundary:**
+> - **Volume Projection (`volumes[].secret`) & Env Vars (`secretKeyRef`):** The **kubelet daemon** retrieves the Secret using worker node credentials and Node authorization. The workload's ServiceAccount does **NOT** require `get secret` RBAC permissions. If the workload uses volume projection, skip to Question 4.
+> - **Direct In-Pod API Queries:** If the application process queries `kube-apiserver` via in-cluster token (`GET /api/v1/namespaces/.../secrets/...`), RBAC is enforced against the ServiceAccount.
+
+If evaluating in-pod API queries, evaluate the RBAC authorization boundary using `kubectl auth can-i`:
 
 ```bash
 kubectl auth can-i get secret/demo-app-secret \
@@ -89,13 +100,13 @@ kubectl auth can-i get secret/demo-app-secret \
 ```
 
 *Hypothesis Evaluation:*
-- **If `no`:** RBAC authorization is missing. Inspect `Role` and `RoleBinding` in the namespace:
+- **If `no` (for in-pod API client):** RBAC authorization is missing. Inspect `Role` and `RoleBinding` in the namespace:
   ```bash
   kubectl get rolebindings -n sample-workloads -o wide
   kubectl describe role secret-reader-role -n sample-workloads
   ```
   Check whether `resourceNames` matches the target secret and `verbs` includes `get`.
-- **If `yes`:** The identity is authorized. Proceed to Question 4.
+- **If `yes` (or workload consumes via volume projection):** Proceed to Question 4.
 
 ---
 
@@ -152,20 +163,32 @@ kubectl exec -n sample-workloads "$POD_NAME" -- ls -la /etc/secrets/demo-app-sec
 ```
 
 *Hypothesis Evaluation:*
-- **If Secret was modified after Pod Start:** The filesystem projection was updated by kubelet, but the application process loaded the password into memory at startup. The in-memory connection pool is using an expired or revoked credential.
+- **If Secret was modified after Pod Start:** The filesystem projection was updated by kubelet (unless mounted with `subPath`), but the application process loaded the password into memory at startup. The in-memory connection pool is using an expired or revoked credential.
 - **Recovery:** Trigger a rolling restart:
   ```bash
   kubectl rollout restart deployment/secret-demo -n sample-workloads
   ```
+- **If Secret was not rotated or already rolled out:** Proceed to Question 7.
 
 ---
 
-## Common Root Causes & Corrective Actions
+### Question 7: Is the Upstream Authoritative Credential Valid?
 
-| Failure Domain | Observed Symptom | Root Cause | Corrective Action |
-| :--- | :--- | :--- | :--- |
-| **Namespace Boundary** | `Secret "demo-app-secret" not found` | Secret created in `default` instead of `sample-workloads`. | Re-create Secret in `sample-workloads`. |
-| **RBAC Verb Isolation** | `403 Forbidden` on API query | Role grants `list` with `resourceNames` (unsupported by k8s authz engine). | Change verb in Role to `get`. |
-| **Volume Configuration** | `CreateContainerConfigError` | Misspelled `secretName` in `deployment.spec.template.spec.volumes`. | Correct `volumes[].secret.secretName`. |
-| **Process Permissions** | `Permission denied: /etc/secrets/...` | Mode `0400` owned by root, container running as UID 10001. | Add `fsGroup: 10001` or set `defaultMode: 288` (0440). |
-| **Rotation Staleness** | DB auth failure after rotation | Application cached credential in RAM at startup. | Run `kubectl rollout restart deployment/secret-demo`. |
+Verify whether the credential payload currently stored in the Secret actually authenticates successfully against the upstream service (e.g., database, external API):
+
+- **Hypothesis Evaluation:** The Secret object and volume mounts may be completely operational in Kubernetes, but the upstream database administrator may have expired the user account, locked the credentials, changed network firewalls, or applied a typo during out-of-band secret creation.
+- **Diagnostic Action:** Test authentication directly against the database from a secure diagnostic bastion using the synthetic test credentials. Never print credentials in logs or CI output.
+
+---
+
+## Common Root Causes, Corrective Actions & Operational Consequences
+
+| Failure Domain | Observed Symptom | Root Cause | Corrective Action | Operational Consequence & Blast Radius |
+| :--- | :--- | :--- | :--- | :--- |
+| **Namespace Boundary** | `Secret "demo-app-secret" not found` | Secret created in `default` instead of `sample-workloads`. | Re-create Secret in `sample-workloads`. | **Low to Medium:** Recreating an existing Secret disruptions any workloads that depend on previous keys; ensure consumer pods are coordinated. |
+| **RBAC Verb Isolation** | `403 Forbidden` on API query | Role grants `list` with `resourceNames` (unsupported by k8s authz engine). | Change verb in Role to `get`. | **High Security Impact:** Never grant wildcard `*` or collection `list`/`watch` to resolve 403 errors; doing so broadens namespace blast radius and risks credential exfiltration. |
+| **Volume Configuration** | `CreateContainerConfigError` / `MountVolume.SetUp failed` | Misspelled `secretName` in `deployment.spec.template.spec.volumes`. | Correct `volumes[].secret.secretName`. | **Medium:** Editing Deployment triggers a rolling update; monitor replica surge and ensure sufficient cluster capacity. |
+| **Process Permissions** | `Permission denied: /etc/secrets/...` | Mode `0400` owned by root, container running as UID 10001. | Add `fsGroup: 10001` or set `defaultMode: 288` (0440). | **Medium:** Modifying `securityContext` triggers Pod termination and replacement. On large persistent volumes, recursive `fsGroup` changes can introduce startup latency. |
+| **Rotation Staleness** | DB auth failure after rotation | Application cached credential in RAM at startup. | Run `kubectl rollout restart deployment/secret-demo`. | **Medium:** Causes rolling pod restart across all replicas. Ensure PDB permits disruption to avoid transient 5xx errors or capacity dips. |
+| **SubPath Non-Updating** | Filesystem never updates after secret change | Secret key mounted via `volumeMounts[].subPath`. | Remove `subPath` in favor of directory projection, or mandate rolling restart on change. | **Medium:** Modifying volume mount structure requires redeployment. Existing container file paths may change. |
+| **Upstream Revocation Failure** | Persistent auth failures on healthy pods | Upstream database revoked old password before pods reloaded. | Roll back upstream revocation or accelerate rolling restart across all consumers. | **High:** Workload authentication downtime until new credentials propagate to 100% of replicas. |
