@@ -26,13 +26,13 @@ A healthy controller status asserts only that the external payload was successfu
       └──────┬──────┘             └──────┬──────┘                 └──────┬──────┘             └──────┬──────┘
              │                           │                               │                           │
       IAM denied,                 ESO crashes or                  Kubernetes    │             Database drops
-      KMS key locked,             refreshInterval                 Secret updated,             old password  
-      STS trust fails.            polling delay.                  app holds old               before pods   
-             │                           │                        env variable.               cycle.        
+      KMS key locked,             refreshInterval                 Secret updated,             old password
+      STS trust fails.            polling delay.                  app holds old               before pods
+             │                           │                        env variable/subPath.       cycle.
              ▼                           ▼                               ▼                           ▼
-      ExternalSecret              Kubernetes                      Process keeps               Immediate     
-      Ready=False                 Secret is stale                 using old key               cluster-wide  
-      (SecretSyncedError)         in etcd                         (Auth failures)             outage storm  
+      ExternalSecret              Kubernetes                      Process keeps               Immediate
+      Ready=False                 Secret is stale                 using old key               cluster-wide
+      (SecretSyncedError)         in etcd                         (Auth failures)             outage storm
 ```
 
 ---

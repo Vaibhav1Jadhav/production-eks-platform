@@ -123,7 +123,7 @@ The running container is executing with the stale, revoked boot-time credential 
 
 ---
 
-## 5. Mechanism: The Environment-Variable Freeze Boundary
+## 5. Mechanism: The Delivery Plane Staleness Boundary
 
 ```mermaid
 flowchart TD
@@ -137,22 +137,25 @@ flowchart TD
         ESOPoll["ESO Polls AWS via IRSA\n(refreshInterval: 1h)"]
         UpdateK8sSec["Mutates Kubernetes Secret\napp-database-secret\nresourceVersion: 98124"]
         StatusSync["Sets Status: SecretSynced=True"]
-        
+
         ESOPoll --> UpdateK8sSec --> StatusSync
     end
 
-    subgraph OS_KERNEL["3. Linux Kernel Process Boundary"]
+    subgraph OS_KERNEL["3. Workload Delivery Boundary"]
         direction TB
         PodBoot["Pod Boot (08:00 AM)\nKernel runs execve()"]
-        EnvTable["Process Environment Table\nDB_PASSWORD = v1 (0a69a239...)\n[IMMUTABLE IN LINUX]"]
-        
+        EnvTable["Process Environment Table\nDB_PASSWORD = [v1_stale_credential]\n[IMMUTABLE IN LINUX]"]
+        SubPathMount["subPath Volume Mount\n[BOUND TO INODE; NEVER UPDATED]"]
+
         PodBoot --> EnvTable
+        PodBoot --> SubPathMount
     end
 
     subgraph OUTCOME["4. Desynchronization Boundary"]
         direction TB
         DBRevoke["Database Revokes v1"]
         UpdateK8sSec -.->|"K8s Secret HAS v2\n(Kernel NEVER updates running env)"| EnvTable
+        UpdateK8sSec -.->|"K8s Secret HAS v2\n(Kubelet NEVER updates subPath)"| SubPathMount
         EnvTable -->|"Authenticates with v1"| DBRevoke
         DBRevoke --> Outage["CRITICAL: Auth Failure Storm\n(All Replicas 5xx)"]
     end
@@ -161,9 +164,10 @@ flowchart TD
 ```
 
 ### Why Did This Happen?
-1. **Linux Kernel Semantics:** When a container process starts, the Linux kernel invokes the `execve()` system call, which populates the process's initial environment table from the container definition. In Linux, process environment tables are **immutable from the outside**. No external system (neither Kubernetes, kubelet, nor container runtimes) can inject new environment variables into an existing, running process.
-2. **ESO Controller Limits:** The External Secrets Operator is a Kubernetes controller. Its boundary ends at the Kubernetes API server (`etcd`). It has no mechanism to reach inside worker node kernel namespaces to alter running processes.
-3. **The Synchronization Illusion:** A successful sync means the cloud store and the Kubernetes Secret match. It asserts **nothing** about running process memory.
+1. **Linux Kernel Semantics (Environment Variables):** When a container process starts, the Linux kernel invokes the `execve()` system call, which populates the process's initial environment table from the container definition. In Linux, process environment tables are **immutable from the outside**. No external system (neither Kubernetes, kubelet, nor container runtimes) can inject new environment variables into an existing, running process.
+2. **The `subPath` Inode Binding Trap:** When workloads mount secrets into specific files via `volumeMounts[].subPath`, kubelet binds directly to the file inode at container initialization. This completely bypasses the atomic `..data` symlink rotation mechanism used for standard directory volume mounts. Consequently, a Secret mounted using `subPath` **never receives automated updates**, behaving exactly like a frozen environment variable.
+3. **ESO Controller Limits:** The External Secrets Operator is a Kubernetes controller. Its boundary ends at the Kubernetes API server (`etcd`). It has no mechanism to reach inside worker node kernel namespaces to alter running processes or force disk re-reads.
+4. **The Synchronization Illusion:** A successful sync means the cloud store and the Kubernetes Secret match in etcd. It asserts **nothing** about running process memory or application adoption.
 
 ---
 

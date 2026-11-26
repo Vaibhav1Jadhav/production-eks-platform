@@ -832,12 +832,40 @@ if missing_docs:
     print(f"Missing required ESO documentation files: {missing_docs}")
     sys.exit(1)
 
+# 9. Backend Roles & Exclusions Verification
+with open("architecture/adr/ADR-006-external-secrets-adoption.md", "r", encoding="utf-8") as f:
+    adr_text = f.read()
+
+for backend in ["AWS Secrets Manager", "OpenBao", "HashiCorp Vault"]:
+    if backend not in adr_text:
+        print(f"ADR-006 missing evaluated backend option: {backend}")
+        sys.exit(1)
+
+if "Vaultwarden" not in adr_text or "strictly excluded" not in adr_text.lower():
+    print("ADR-006 must explicitly exclude Vaultwarden from ESO architecture")
+    sys.exit(1)
+
+# 10. Complete Credential Delivery Lifecycle & subPath Verification
+for term in ["subPath", "execve()", "SecretSynced", "Downstream Authentication"]:
+    if term not in adr_text:
+        print(f"ADR-006 missing lifecycle invariant: {term}")
+        sys.exit(1)
+
+# 11. Security Boundaries: PSS & Namespaced Store Verification
+if "Pod Security Standards" not in adr_text or "not prevent authorized Pod creators from referencing Secrets" not in adr_text:
+    print("ADR-006 must clarify that Pod Security Standards do not prevent referencing Secrets")
+    sys.exit(1)
+
+if not re.search(r'does\s+(\*\*not\*\*|not)\s+(create\s+a\s+complete|independently\s+guarantee)', adr_text, re.IGNORECASE):
+    print("ADR-006 must clarify namespaced SecretStore isolation boundary limits")
+    sys.exit(1)
+
 print("OK")
 sys.exit(0)
 EOF
 )
   if [ $? -eq 0 ]; then
-    log_pass "External Secrets Operator invariants verified (v1beta1 API, SecretsManager us-east-1, IRSA decoupling, 1h refreshInterval, Owner policy, env var staleness model)"
+    log_pass "External Secrets Operator invariants verified (v1beta1 API, SecretsManager us-east-1, IRSA decoupling, 1h refreshInterval, Owner policy, env var staleness model, subPath/backend validation)"
   else
     log_fail "External Secrets Operator check failed: $ESO_CHECK"
   fi

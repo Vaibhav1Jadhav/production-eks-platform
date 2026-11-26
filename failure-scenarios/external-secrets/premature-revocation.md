@@ -15,9 +15,9 @@ A high-throughput payment processing service in `sample-workloads` queries an Am
 Security compliance mandates monthly database credential rotation.
 
 At `10:00 AM`, the database administrator:
-1. Generates a new database password `Pass#2026_v2` in AWS Secrets Manager under `production/app/database`.
-2. Changes the master database password on the PostgreSQL cluster to `Pass#2026_v2`.
-3. **Immediately drops/revokes the previous password `Pass#2026_v1`** to ensure old credentials cannot be used.
+1. Generates a new database credential `[v2_new_credential]` in AWS Secrets Manager under `production/app/database`.
+2. Changes the master database password on the PostgreSQL cluster to `[v2_new_credential]`.
+3. **Immediately drops/revokes the previous credential `[v1_old_credential]`** to ensure old credentials cannot be used.
 
 ---
 

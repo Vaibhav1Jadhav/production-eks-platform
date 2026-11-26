@@ -128,16 +128,21 @@ kubectl get secret app-database-secret -n sample-workloads -o jsonpath='{.metada
 
 ---
 
-### Question 6: Delivery Mechanism: Env Var vs. Volume Mount?
+### Question 6: Delivery Mechanism: Env Var vs. Volume Mount vs. subPath?
 Inspect the Deployment manifest to determine how credentials enter the pod:
 
 ```bash
+# Check environment variable references:
 kubectl get deployment external-secret-demo -n sample-workloads -o jsonpath='{.spec.template.spec.containers[*].env[*].valueFrom.secretKeyRef.name}'
+
+# Check volume mount projections and subPath usage:
+kubectl get deployment external-secret-demo -n sample-workloads -o jsonpath='{range .spec.template.spec.containers[*].volumeMounts[*]}{.name}{"\t"}{.mountPath}{"\tsubPath="}{.subPath}{"\n"}{end}'
 ```
 
 *Hypothesis Evaluation:*
 - **If consumed via `env[].valueFrom.secretKeyRef`:** **THE APPLICATION IS STALE.** In Linux, process environment tables are immutable after `execve()`. Running containers will **never** observe the new secret without a restart. Proceed to Question 7.
-- **If consumed via `volumeMounts`:** The file on `tmpfs` has been updated by kubelet, but the application in-memory connection pool may still hold the old credential. Proceed to Question 7.
+- **If mounted via `subPath`:** **THE FILE IS STALE.** In Kubernetes, `subPath` mounts bind directly to file inodes at container creation and **never** receive automated updates from kubelet. A pod restart is mandatory. Proceed to Question 7.
+- **If consumed via standard directory `volumeMounts`:** The file on `tmpfs` has been updated by kubelet (symlink swap), but the application in-memory connection pool may still hold the old credential. Proceed to Question 7.
 
 ---
 
@@ -179,5 +184,6 @@ If the pod booted with the new credential but authentication still fails:
 | **IRSA OIDC Mismatch** | `AssumeRoleWithWebIdentity failed` | IAM Role trust policy specifies wrong namespace or ServiceAccount. | Update OIDC trust policy `sub` condition to match `sample-workloads:eso-irsa-sa`. | **Low:** Restores STS token exchange. Zero workload disruption. |
 | **Sync Interval Delay** | ExternalSecret shows old data for up to 1h | Default `refreshInterval: 1h` has not elapsed since cloud update. | Annotate ExternalSecret with `force-sync=$(date +%s)`. | **Low:** Forces immediate reconciliation loop without waiting for next poll. |
 | **Environment Staleness** | DB auth failure after successful sync | Workload uses `env[].valueFrom.secretKeyRef`; Linux environment table is frozen. | Execute `kubectl rollout restart deployment/external-secret-demo`. | **Medium:** Causes rolling pod restart across all replicas. Ensure PDB permits disruption to avoid transient 5xx errors. |
+| **subPath Mount Staleness** | DB auth failure after successful sync | Workload uses `volumeMounts[].subPath`; kubelet never updates subPath inodes automatically. | Execute `kubectl rollout restart deployment/external-secret-demo`. | **Medium:** Cycles all pod replicas so new containers bind to the updated secret inode. |
 | **In-Memory Pool Caching** | DB auth failure on volume mount | App read volume file at boot into static RAM pool; never re-reads disk. | Execute `kubectl rollout restart deployment/external-secret-demo`. | **Medium:** Cycles all pod replicas. Guarantees fresh connection pool initialization. |
 | **Premature Revocation** | Immediate 100% auth failure across cluster | DB admin revoked old password before ESO synced or pods restarted. | Temporarily re-enable old password on DB cluster until rollout completes. | **High Emergency:** Restores production availability immediately; re-attempt rotation with a dual-credential overlap window (if supported) or planned coordination. |
