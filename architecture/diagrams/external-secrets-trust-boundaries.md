@@ -102,9 +102,9 @@ Our implementation establishes AWS Secrets Manager as the primary managed backen
 1. **AWS Secrets Manager (Primary Managed Backend):**
    - Authoritative AWS-managed key-value store with KMS envelope encryption and CloudTrail auditing.
    - Pinned integration uses External Secrets Operator v0.9.11 with `external-secrets.io/v1beta1` and EKS IAM Roles for Service Accounts (IRSA).
-2. **OpenBao (Self-Hosted Backend Option):**
+2. **OpenBao (Self-Hosted Backend Implementation):**
    - An open-source, community-governed fork of HashiCorp Vault under the Linux Foundation (MPL-2.0).
-   - *Compatibility with ESO v0.9.11:* The pinned ESO v0.9.11 release contains **no dedicated native `openbao` provider** in its CRD schema. While OpenBao provides Vault v1/v2 HTTP API compatibility (enabling potential connectivity via the generic `vault` provider), official SecretStore schema support, dedicated authentication plugins, and verified feature parity were not packaged in ESO v0.9.11. Compatibility with HashiCorp Vault does not automatically prove every OpenBao integration works without dedicated end-to-end testing. OpenBao is documented as an alternative self-hosted backend and a future compatibility-tested extension; we do not fabricate unverified manifests.
+   - *Implementation in ESO v0.9.11:* ESO v0.9.11 contains no dedicated `provider.openbao` CRD block. OpenBao is implemented in `kubernetes/workloads/openbao-external-secret-demo/` using the official `spec.provider.vault` schema with the Kubernetes Auth Method (`auth.kubernetes`) and ConfigMap CA verification (`openbao-ca-cert`), fully preserving API compatibility without inventing an unsupported schema.
 3. **HashiCorp Vault (Alternative Enterprise Backend):**
    - An alternative secrets management engine supporting dynamic database secrets, lease revocation, and transit encryption.
    - Incurs significant operational overhead (unseal keys, Raft consensus storage, high-availability cluster maintenance).

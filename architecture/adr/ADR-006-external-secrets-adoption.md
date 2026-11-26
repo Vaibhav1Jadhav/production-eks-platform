@@ -47,24 +47,53 @@ We must select an external secrets architecture that provides automated synchron
 
 We establish the following architectural policies for External Secrets Management:
 
-### 1. Standardize on External Secrets Operator (ESO) v0.9.11 with AWS Secrets Manager
+### 1. Standardize on External Secrets Operator (ESO) v0.9.11
 We adopt **External Secrets Operator (ESO) v0.9.11** with the `external-secrets.io/v1beta1` CRD API specification:
 - Operates as a declarative, in-cluster Kubernetes controller that reconciles external provider state into native Kubernetes Secret objects.
-- Uses **AWS Secrets Manager** as the primary managed AWS/EKS secret backend, leveraging KMS envelope encryption and CloudTrail auditing.
+- Evaluates and provides concrete, independently configurable reference implementations for two primary architectures:
+  1. **AWS Secrets Manager:** Managed cloud backend for AWS EKS environments.
+  2. **OpenBao:** Self-hosted open-source backend using ESO's Vault-compatible provider schema.
 - Supports configurable polling and reconciliation intervals (`refreshInterval: 1h`) to detect upstream credential rotations.
 
-### 2. Backend Roles: Primary, Alternatives, and Exclusions
-We document distinct secret backend options as alternative options, not three mandatory components in one deployment:
-- **AWS Secrets Manager (Primary Managed Backend):** The selected production implementation for AWS EKS workloads. Fully integrated via IAM Roles for Service Accounts (IRSA) with native AWS KMS encryption.
-- **OpenBao (Self-Hosted Secrets Management Backend):** An open-source, community-driven fork of HashiCorp Vault under the Linux Foundation. Evaluated as an alternative self-hosted backend.
-  - *Compatibility with ESO v0.9.11:* The pinned ESO v0.9.11 CRD schema (`external-secrets.io/v1beta1`) has **no dedicated native `spec.provider.openbao` provider**. While OpenBao maintains Vault v1/v2 HTTP API compatibility (allowing generic interaction via ESO's `spec.provider.vault` provider pointing to an OpenBao server endpoint), native OpenBao provider CRDs, dedicated authentication methods, and integration testing of OpenBao-specific engine features were not officially packaged in ESO v0.9.11. Compatibility with Vault does not automatically prove every OpenBao integration works without dedicated end-to-end verification. Consequently, OpenBao is documented as a viable alternative self-hosted backend and a future compatibility-tested extension; we do not fabricate working manifests.
-- **HashiCorp Vault (Alternative Secrets Management Backend):** An alternative enterprise secret engine supporting dynamic database secrets, lease revocation, and transit encryption, under the HashiCorp BSL license. Adds operational overhead of unseal keys, Raft storage, and cluster maintenance.
-- **Explicit Exclusion of Vaultwarden:**
-  - **Vaultwarden is strictly excluded from the ESO architecture.**
-  - Vaultwarden is a lightweight, Bitwarden-compatible password manager server intended for personal and organizational end-user credential vaults.
-  - Vaultwarden is **not** an equivalent Kubernetes workload-secret backend.
-  - Vaultwarden is **not** a policy engine, **not** a Kubernetes secret controller, and **not** an application credential rotation solution.
-  - It provides no External Secrets Operator provider integration and has no role in automated workload credential delivery.
+### 2. Backend Roles & Implementation Architecture
+
+We implement both backends as separate, independently configurable reference workloads:
+
+#### Implementation A: AWS Secrets Manager (Managed Cloud Backend)
+- **Workload Directory:** `kubernetes/workloads/external-secret-demo/`
+- **Provider Schema:** `spec.provider.aws` (`service: SecretsManager`, `region: us-east-1`).
+- **Authentication:** Dedicated controller identity (`eso-irsa-sa`) authenticates via IAM Roles for Service Accounts (IRSA) using AWS STS `AssumeRoleWithWebIdentity`.
+- **Security Boundary:** AWS IAM permission policies strictly scoped to secret ARNs (`production/app/database-*`) and KMS CMK key policies.
+
+#### Implementation B: OpenBao (Self-Hosted Open-Source Backend)
+- **Workload Directory:** `kubernetes/workloads/openbao-external-secret-demo/`
+- **Provider Schema Rationale:** OpenBao is an open-source, community-governed fork of HashiCorp Vault under the Linux Foundation (MPL-2.0). The pinned ESO v0.9.11 release contains **no dedicated native `provider.openbao` CRD block**. Because OpenBao maintains strict HTTP API compatibility with Vault v1/v2 secret engines, ESO interfaces with OpenBao using the official `spec.provider.vault` schema.
+- **Authentication:** Dedicated controller identity (`openbao-client-sa`) authenticates via the **Kubernetes Auth Method** (`auth.kubernetes`), presenting its projected ServiceAccount JWT to OpenBao's login endpoint. OpenBao verifies the token via the Kubernetes API server (`TokenReview`) and issues a scoped client token bound to role `openbao-app-role`.
+- **TLS Trust Anchor:** Enforces TLS verification using `caProvider` referencing ConfigMap `openbao-ca-cert`.
+- **Security Boundary:** OpenBao internal ACL path policies (`path "secret/data/app/*" { capabilities = ["read"] }`).
+
+#### Authentication Differences & Provider Security Comparison
+
+| Property | AWS Secrets Manager Implementation | OpenBao Implementation |
+| :--- | :--- | :--- |
+| **Provider Schema** | `spec.provider.aws` | `spec.provider.vault` (Vault-compatible API) |
+| **Authentication Flow** | IRSA: Projected JWT $\to$ AWS STS $\to$ Temporary IAM credentials | K8s Auth: Projected JWT $\to$ OpenBao Login $\to$ Kubernetes TokenReview |
+| **Policy Enforcement** | AWS IAM Policies + KMS Key Policies | OpenBao Path-based HCL ACL Policies |
+| **Trust Anchor** | AWS public CA / Private CA | Internal PKI via `caProvider` ConfigMap |
+| **Operational Overhead** | Zero cluster operational burden; AWS managed service | Requires operating HA OpenBao cluster, unseal keys, and storage backend |
+
+#### Provider-Specific Security Boundaries & Realities
+- **Decoupled Controller vs. Workload Identity:** In both implementations, the application workload ServiceAccount (`external-secret-app-sa` or `openbao-app-workload-sa`) possesses **zero external provider permissions** (no AWS IAM, no OpenBao tokens).
+- **Workload Secret Access Reality:** Denying external provider access prevents lateral traversal to cloud or Vault APIs, but the application **still receives the native Kubernetes Secret** delivered to its container. Workload compromise exposes its delivered credentials locally.
+- **Indirect Access Paths:** An identity with `pods/create` or `pods/exec` in the namespace can mount or inspect any secret. While Pod Security Standards (PSS) enforce execution security properties (e.g., non-root user, dropped capabilities), **PSS alone does not prevent authorized Pod creators from referencing Secrets**. Complete isolation requires combining namespace RBAC, workload authorization design, and fine-grained admission policies (e.g., Kyverno, Gatekeeper, ValidatingAdmissionPolicy).
+- **Namespaced Store Boundary:** A namespaced `SecretStore` establishes a localized configuration scope within `sample-workloads`. A namespaced `SecretStore` does **not** create a complete or impermeable security boundary on its own; tenant isolation requires coordinated backend ACLs, IAM scoping, RBAC, and admission policies.
+
+#### Explicit Exclusion of Vaultwarden
+- **Vaultwarden is strictly excluded from the ESO architecture.**
+- Vaultwarden is a lightweight, Bitwarden-compatible password manager server intended for personal/team user password storage and browser extension syncing.
+- Vaultwarden is **not** an equivalent Kubernetes workload-secret backend.
+- Vaultwarden is **not** a policy engine, **not** a Kubernetes secret controller, and **not** an application credential rotation solution.
+- It provides no External Secrets Operator provider integration and has no role in automated workload credential delivery.
 
 ### 3. Isolate Controller Identity from Workload Identity via EKS IRSA
 - The ESO controller authenticates to AWS Secrets Manager using **IAM Roles for Service Accounts (IRSA)** or **EKS Pod Identity**.
@@ -198,9 +227,9 @@ flowchart TD
 
 ### Alternative 5: OpenBao (Self-Hosted Open-Source Backend)
 - **Description:** Deploying OpenBao (Linux Foundation open-source fork of Vault) as a self-hosted secrets backend.
-- **Evaluation:** **VIABLE ALTERNATIVE / FUTURE EXTENSION.**
-  - *Advantages:* True open-source licensing (MPL-2.0), no BSL licensing restrictions, Vault API compatibility.
-  - *Disadvantages for Pinned ESO v0.9.11:* ESO v0.9.11 has no native `spec.provider.openbao` CRD schema. While basic KV operations may function through the generic `vault` provider, native authentication workflows and full feature compatibility require future verification. Documented as an alternative self-hosted option rather than fabricating unverified manifests.
+- **Evaluation:** **IMPLEMENTED SEPARATELY VIA VAULT-COMPATIBLE PROVIDER.**
+  - *Advantages:* True open-source licensing (MPL-2.0), no BSL licensing restrictions, strict Vault API compatibility.
+  - *Integration in Pinned ESO v0.9.11:* ESO v0.9.11 has no native `spec.provider.openbao` CRD block. We implement OpenBao in `kubernetes/workloads/openbao-external-secret-demo/` using the official `spec.provider.vault` schema with Kubernetes token authentication (`auth.kubernetes`) and ConfigMap CA bundle verification. This models self-hosted secrets delivery without fabricating an unsupported CRD schema.
 
 ### Alternative 6: Vaultwarden
 - **Description:** Lightweight Bitwarden-compatible password manager server.

@@ -98,11 +98,11 @@ Our platform design establishes clean boundaries between node-level control plan
 
 ### 6. External Secrets Management & Application Adoption Strategy
 - **External Secrets Operator (ESO) v0.9.11:** Declarative in-cluster reconciliation of cloud credentials using the `external-secrets.io/v1beta1` specification.
-- **Primary Managed Cloud Backend:** Standardizes on AWS Secrets Manager with KMS envelope encryption and CloudTrail auditing.
-- **Alternative Backend Delineation:** Evaluates OpenBao (self-hosted OSS fork under Linux Foundation; future extension for pinned ESO v0.9.11) and HashiCorp Vault (dynamic lease alternative) as distinct alternative options, while explicitly excluding Vaultwarden (user password manager, not a workload backend).
-- **Controller IRSA vs. Workload Decoupling:** Decouples cloud IAM permissions by assigning IRSA credentials exclusively to the ESO controller (`eso-irsa-sa`), while application pods (`external-secret-app-sa`) have zero cloud IAM privileges.
+- **Dual Independently Configured Backends:**
+  - **AWS Secrets Manager (Managed Cloud):** Configured via IRSA (`eso-irsa-sa`) in [`kubernetes/workloads/external-secret-demo/`](kubernetes/workloads/external-secret-demo/).
+  - **OpenBao (Self-Hosted OSS):** Configured via Kubernetes auth (`auth.kubernetes`) and TLS verification in [`kubernetes/workloads/openbao-external-secret-demo/`](kubernetes/workloads/openbao-external-secret-demo/).
+- **Controller vs. Workload Identity Decoupling:** Decouples credentials by assigning access exclusively to the controller, while application workloads possess zero cloud IAM or OpenBao permissions.
 - **Complete Delivery Plane Staleness Model:** Formally proves that updating Kubernetes Secrets does not mutate running process environment tables (`execve` boundary), updates directory volume mounts asynchronously, and never updates `subPath` volume mounts, requiring explicit deployment rollouts.
-- **Production Kubernetes Manifests:** Configured in [`kubernetes/workloads/external-secret-demo/`](kubernetes/workloads/external-secret-demo/).
 
 ---
 
@@ -206,7 +206,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 | Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | **#25** | Kubernetes Secrets — Base64 ≠ Secret Management | *"Who Can Retrieve the Credential, Where Does It Live, and Where Can It Leak?"* | **Implementation available** *(LinkedIn publication pending)* | [Workload Manifests](kubernetes/workloads/secret-demo/) • [ADR-005](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md) • [Secret Trust-Boundary Flow](architecture/diagrams/secret-trust-boundary-flow.md) • [Runbook](runbooks/secret-access-and-delivery-failure.md) • [Failure Scenarios](failure-scenarios/secrets/) • [Validation Evidence](failure-scenarios/secrets/validation.md) |
-| **#26** | External Secrets Management — Sync ≠ Adoption | *"If External Secrets Operator Synced the New Secret, Why Is the App Still Failing?"* | **Implementation available** *(LinkedIn publication pending)* | [Workload Manifests](kubernetes/workloads/external-secret-demo/) • [ADR-006](architecture/adr/ADR-006-external-secrets-adoption.md) • [External Secrets Architecture](architecture/diagrams/external-secrets-trust-boundaries.md) • [Runbook](runbooks/external-secret-sync-and-adoption-failure.md) • [Failure Scenarios](failure-scenarios/external-secrets/) • [Validation Evidence](failure-scenarios/external-secrets/validation.md) |
+| **#26** | External Secrets Management — Sync ≠ Adoption | *"If External Secrets Operator Synced the New Secret, Why Is the App Still Failing?"* | **Implementation available** *(LinkedIn publication pending)* | [AWS Manifests](kubernetes/workloads/external-secret-demo/) • [OpenBao Manifests](kubernetes/workloads/openbao-external-secret-demo/) • [ADR-006](architecture/adr/ADR-006-external-secrets-adoption.md) • [External Secrets Architecture](architecture/diagrams/external-secrets-trust-boundaries.md) • [Runbook](runbooks/external-secret-sync-and-adoption-failure.md) • [Failure Scenarios](failure-scenarios/external-secrets/) • [Validation Evidence](failure-scenarios/external-secrets/validation.md) |
 
 ---
 

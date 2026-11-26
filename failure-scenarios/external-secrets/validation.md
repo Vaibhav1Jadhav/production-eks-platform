@@ -43,17 +43,21 @@ Every test is explicitly classified under the repository evidence taxonomy. Text
 | **AWS IAM Policy JSON Syntax & Scoping** | Python 3.12.7 (`json.loads`) | `bash scripts/validate.sh` (Check 14) | Valid JSON syntax; ARN scoped without wildcard `*` | Valid JSON; scoped to `production/app/database-*` | **PASS** | **STATICALLY VALIDATED** |
 | **Zero Credential-Derived Logging Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 14) | No `sha256sum`, lengths, or raw secrets; non-sensitive signals present | Verified `SYNTHETIC_AUTH_ESTABLISHED`, `BOOT_TIME`; 0 hashes | **PASS** | **STATICALLY VALIDATED** |
 | **Identity Decoupling Verification** | Python 3.12.7 | `bash scripts/validate.sh` (Check 14) | Controller SA (`eso-irsa-sa`) decoupled from workload SA (`external-secret-app-sa`) | Verified IRSA annotation on controller SA; app SA has 0 IAM | **PASS** | **STATICALLY VALIDATED** |
-| **Backend Roles & Architecture Scope** | Python 3.12.7 | `bash scripts/validate.sh` (Check 14) | Distinct backends (AWS SM, OpenBao, Vault); Vaultwarden strictly excluded | Verified AWS primary, OpenBao future ext, Vault alternative, Vaultwarden excluded | **PASS** | **STATICALLY VALIDATED** |
+| **Backend Roles & Architecture Scope** | Python 3.12.7 | `bash scripts/validate.sh` (Check 14) | Distinct backends (AWS SM, OpenBao, Vault); Vaultwarden strictly excluded | Verified AWS primary, OpenBao implemented separately, Vault alternative, Vaultwarden excluded | **PASS** | **STATICALLY VALIDATED** |
 | **Delivery Plane & subPath Invariant Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 14) | Verifies env freeze (`execve`), volume symlink, and subPath no-update behavior | Verified subPath inode binding and delivery mechanisms in ADR-006 & manifests | **PASS** | **STATICALLY VALIDATED** |
+| **OpenBao Manifest & Vault Schema Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 15) | OpenBao manifests use ESO v0.9.11 Vault-compatible provider (`v1beta1`) | Verified SecretStore `spec.provider.vault` with KV v2 engine | **PASS** | **STATICALLY VALIDATED** |
+| **OpenBao K8s Auth & TLS CA Provider** | Python 3.12.7 | `bash scripts/validate.sh` (Check 15) | Verifies Kubernetes auth (`openbao-client-sa`) and ConfigMap CA trust anchor | Verified `auth.kubernetes`, `openbao-app-role`, and `openbao-ca-cert` | **PASS** | **STATICALLY VALIDATED** |
+| **OpenBao Workload Staleness & Target Mapping** | Python 3.12.7 | `bash scripts/validate.sh` (Check 15) | Verifies Owner creationPolicy, secretKeyRef delivery, and non-sensitive signals | Verified `openbao-database-secret` consumption and `SYNTHETIC_AUTH_ESTABLISHED` | **PASS** | **STATICALLY VALIDATED** |
+| **LinkedIn Publication Artifacts Verification** | Python 3.12.7 | `bash scripts/validate.sh` (Check 15) | Verifies post, image description, publication checklist, and 1024x576 PNG image | Verified all 4 publication artifacts exist with non-zero sizes | **PASS** | **STATICALLY VALIDATED** |
 | **Kustomize Manifest Rendering** | kustomize / kubectl | `kustomize build kubernetes/workloads/external-secret-demo/` | Render combined manifests successfully | Skipped: Neither kustomize nor kubectl installed in PATH | **SKIP** | **SKIPPED** |
 | **Kubectl Client Dry-Run** | kubectl | `kubectl apply --dry-run=client -k ...` | Manifests pass API server client dry-run | Skipped: kubectl not installed in PATH | **SKIP** | **SKIPPED** |
 | **Popeye Live Cluster Hygiene Scan** | Popeye v0.21.5 | `popeye -n sample-workloads` | Live cluster operational hygiene report | Skipped: Offline validation mode; no disposable cluster | **SKIP** | **SKIPPED** |
 | **Runtime Provider Authorization** | AWS STS / Secrets Manager | `aws secretsmanager get-secret-value ...` | IRSA token exchange retrieves secret | Skipped: Offline validation mode; zero cloud resources | **SKIP** | **SKIPPED** |
+| **Runtime OpenBao Server Reachability** | curl / OpenBao sys health | `curl .../v1/sys/health` | Validate live OpenBao cluster endpoint | Skipped: Offline validation mode; zero self-hosted servers | **SKIP** | **SKIPPED** |
 | **Runtime ESO Reconciliation Loop** | ESO Controller | Controller reconcile event | Controller updates target Kubernetes Secret | Skipped: Offline validation mode; no live ESO controller | **SKIP** | **SKIPPED** |
 | **Runtime Workload Staleness Trap** | Linux Kernel / Kubelet | In-container process memory check | Process retains boot-time env var despite Secret update | Documented architectural invariant based on `execve()` | **DESIGN-ASSERTION** | **DESIGNED** |
 | **Runtime Rolling Rollout Adoption** | Kubernetes Deployment Controller | `kubectl rollout restart deployment/...` | Replacement pods boot with updated secret | Documented architectural invariant based on Deployment controller | **DESIGN-ASSERTION** | **DESIGNED** |
 | **Downstream Datastore Authentication** | Target Datastore (PostgreSQL) | Database client connection | Database verifies active credential | Documented limitation: requires live database infrastructure | **DESIGN-ASSERTION** | **DESIGNED** |
-| **OpenBao Native Integration Runtime Check** | OpenBao Server / ESO | Dynamic engine integration check | Validate OpenBao-specific engine features in ESO v0.9.11 | Future compatibility-tested extension; no native provider in v0.9.11 | **DESIGN-ASSERTION** | **DESIGNED** |
 | **Milestone #21 Regression Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 4) | Probes pass normal, startup delay, unready, deadlock | All probe simulation modes verified | **PASS** | **STATICALLY VALIDATED** |
 | **Milestone #22 Regression Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 5) | PDB formula `replicas (3) > minAvailable (2)` holds | Arithmetic lock and AlwaysAllow policy verified | **PASS** | **STATICALLY VALIDATED** |
 | **Milestone #23 Regression Check** | Python 3.12.7 | `bash scripts/validate.sh` (Check 8) | Multi-AZ `maxSkew: 1`, `DoNotSchedule`, selector | Verified topology spread constraints in sample-api | **PASS** | **STATICALLY VALIDATED** |
@@ -65,15 +69,15 @@ Every test is explicitly classified under the repository evidence taxonomy. Text
 ## 3. Validation Summary Counts
 
 - **Deterministic Local Script Execution (`scripts/validate.sh`):**
-  - **Passed:** 27
+  - **Passed:** 34
   - **Failed:** 0
-  - **Skipped:** 6 (Optional runtime checks requiring live cluster / CLI binaries)
+  - **Skipped:** 7 (Optional runtime checks requiring live cluster / CLI binaries)
 - **Four-Layer Evidence Matrix Classification:**
-  - **Total Items in Matrix:** 24
-  - **Executed Tests Passed (`PASS`):** 14 (All `STATICALLY VALIDATED` deterministic checks)
+  - **Total Items in Matrix:** 28
+  - **Executed Tests Passed (`PASS`):** 18 (All `STATICALLY VALIDATED` deterministic checks)
   - **Executed Tests Failed (`FAIL`):** 0
-  - **Skipped Tests (`SKIP`):** 6 (`SKIPPED` due to offline environment, missing CRDs/tooling, or zero cloud resources)
-  - **Documented Design Assertions (`DESIGN-ASSERTION`):** 4 (`DESIGNED` platform behaviors; documented architectural models, explicitly NOT counted as executed test passes)
+  - **Skipped Tests (`SKIP`):** 7 (`SKIPPED` due to offline environment, missing CRDs/tooling, or zero cloud/OpenBao resources)
+  - **Documented Design Assertions (`DESIGN-ASSERTION`):** 3 (`DESIGNED` platform behaviors; documented architectural models, explicitly NOT counted as executed test passes)
 
 ---
 

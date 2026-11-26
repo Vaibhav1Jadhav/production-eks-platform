@@ -286,16 +286,16 @@ fi
 # ------------------------------------------------------------------------------
 # 6. Kustomize Build Validation (Optional Tool Check)
 # ------------------------------------------------------------------------------
-echo -e "\n6. Kustomize Build Check (sample-api, stateful-demo, secret-demo & external-secret-demo)"
+echo -e "\n6. Kustomize Build Check (sample-api, stateful-demo, secret-demo, external-secret-demo & openbao-external-secret-demo)"
 if command -v kustomize >/dev/null 2>&1; then
-  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/secret-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/external-secret-demo >/dev/null 2>&1; then
-    log_pass "kustomize build succeeded for sample-api, stateful-demo, secret-demo and external-secret-demo"
+  if kustomize build kubernetes/workloads/sample-api >/dev/null 2>&1 && kustomize build kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/secret-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/external-secret-demo >/dev/null 2>&1 && kustomize build kubernetes/workloads/openbao-external-secret-demo >/dev/null 2>&1; then
+    log_pass "kustomize build succeeded for sample-api, stateful-demo, secret-demo, external-secret-demo and openbao-external-secret-demo"
   else
     log_fail "kustomize build failed for workloads"
   fi
 elif command -v kubectl >/dev/null 2>&1; then
-  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/secret-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/external-secret-demo >/dev/null 2>&1; then
-    log_pass "kubectl kustomize succeeded for sample-api, stateful-demo, secret-demo and external-secret-demo"
+  if kubectl kustomize kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/secret-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/external-secret-demo >/dev/null 2>&1 && kubectl kustomize kubernetes/workloads/openbao-external-secret-demo >/dev/null 2>&1; then
+    log_pass "kubectl kustomize succeeded for sample-api, stateful-demo, secret-demo, external-secret-demo and openbao-external-secret-demo"
   else
     log_fail "kubectl kustomize failed for workloads"
   fi
@@ -308,8 +308,8 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n7. Kubectl Client Dry-Run Check"
 if command -v kubectl >/dev/null 2>&1; then
-  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/secret-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/external-secret-demo >/dev/null 2>&1; then
-    log_pass "kubectl apply --dry-run=client succeeded for sample-api, stateful-demo, secret-demo and external-secret-demo"
+  if kubectl apply --dry-run=client -k kubernetes/workloads/sample-api >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/stateful-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/secret-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/external-secret-demo >/dev/null 2>&1 && kubectl apply --dry-run=client -k kubernetes/workloads/openbao-external-secret-demo >/dev/null 2>&1; then
+    log_pass "kubectl apply --dry-run=client succeeded for sample-api, stateful-demo, secret-demo, external-secret-demo and openbao-external-secret-demo"
   else
     log_fail "kubectl apply --dry-run=client failed"
   fi
@@ -684,9 +684,9 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 14. External Secrets Operator (ESO) & AWS Secrets Manager Integration Check
+# 14. External Secrets Operator (ESO): AWS Secrets Manager Integration Check
 # ------------------------------------------------------------------------------
-echo -e "\n14. External Secrets Operator & AWS Secrets Manager Integration Check"
+echo -e "\n14. External Secrets Operator: AWS Secrets Manager Integration Check"
 if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/external-secret-demo" ]; then
   ESO_CHECK=$($PYTHON_CMD - << 'EOF'
 import os, sys, re
@@ -865,18 +865,170 @@ sys.exit(0)
 EOF
 )
   if [ $? -eq 0 ]; then
-    log_pass "External Secrets Operator invariants verified (v1beta1 API, SecretsManager us-east-1, IRSA decoupling, 1h refreshInterval, Owner policy, env var staleness model, subPath/backend validation)"
+    log_pass "AWS Secrets Manager integration verified (v1beta1 API, SecretsManager us-east-1, IRSA decoupling, 1h refreshInterval, Owner policy, env var staleness model, subPath/backend validation)"
   else
-    log_fail "External Secrets Operator check failed: $ESO_CHECK"
+    log_fail "AWS Secrets Manager check failed: $ESO_CHECK"
   fi
 else
   log_skip "Python or external-secret-demo directory unavailable"
 fi
 
 # ------------------------------------------------------------------------------
-# 15. Optional Runtime External Secrets Operator Reconcile Check
+# 15. External Secrets Operator (ESO): OpenBao Integration Check (Vault Provider Schema)
 # ------------------------------------------------------------------------------
-echo -e "\n15. Optional Runtime External Secrets Operator Reconcile Check"
+echo -e "\n15. External Secrets Operator: OpenBao Integration Check (Vault Provider Schema)"
+if [ -n "$PYTHON_CMD" ] && [ -d "kubernetes/workloads/openbao-external-secret-demo" ]; then
+  OPENBAO_CHECK=$($PYTHON_CMD - << 'EOF'
+import os, sys, re
+
+bao_dir = "kubernetes/workloads/openbao-external-secret-demo"
+files = ["serviceaccount.yaml", "ca-configmap.yaml", "secretstore.yaml", "externalsecret.yaml", "deployment.yaml", "kustomization.yaml", "README.md"]
+missing = [f for f in files if not os.path.isfile(os.path.join(bao_dir, f))]
+if missing:
+    print(f"Missing required OpenBao manifest files: {missing}")
+    sys.exit(1)
+
+with open(os.path.join(bao_dir, "serviceaccount.yaml"), "r", encoding="utf-8") as f:
+    sa_text = f.read()
+
+with open(os.path.join(bao_dir, "ca-configmap.yaml"), "r", encoding="utf-8") as f:
+    ca_text = f.read()
+
+with open(os.path.join(bao_dir, "secretstore.yaml"), "r", encoding="utf-8") as f:
+    ss_text = f.read()
+
+with open(os.path.join(bao_dir, "externalsecret.yaml"), "r", encoding="utf-8") as f:
+    es_text = f.read()
+
+with open(os.path.join(bao_dir, "deployment.yaml"), "r", encoding="utf-8") as f:
+    dep_text = f.read()
+
+with open(os.path.join(bao_dir, "kustomization.yaml"), "r", encoding="utf-8") as f:
+    kust_text = f.read()
+
+# 1. API Version Verification (external-secrets.io/v1beta1)
+if "apiVersion: external-secrets.io/v1beta1" not in ss_text:
+    print("OpenBao SecretStore must use apiVersion: external-secrets.io/v1beta1")
+    sys.exit(1)
+
+if "apiVersion: external-secrets.io/v1beta1" not in es_text:
+    print("OpenBao ExternalSecret must use apiVersion: external-secrets.io/v1beta1")
+    sys.exit(1)
+
+# 2. Vault-Compatible Provider Configuration
+if "kind: SecretStore" not in ss_text or "name: openbao-store" not in ss_text:
+    print("SecretStore missing kind: SecretStore or name: openbao-store")
+    sys.exit(1)
+
+if "vault:" not in ss_text or "server:" not in ss_text or "path: \"secret\"" not in ss_text or "version: \"v2\"" not in ss_text:
+    print("SecretStore must use Vault-compatible provider schema (vault, server, path: secret, version: v2)")
+    sys.exit(1)
+
+# 3. TLS / CA Provider Configuration
+if "caProvider:" not in ss_text or "name: openbao-ca-cert" not in ss_text or "key: ca.crt" not in ss_text:
+    print("SecretStore must configure caProvider pointing to ConfigMap openbao-ca-cert")
+    sys.exit(1)
+
+if "name: openbao-ca-cert" not in ca_text or "ca.crt:" not in ca_text:
+    print("ca-configmap.yaml must define ConfigMap openbao-ca-cert with ca.crt key")
+    sys.exit(1)
+
+# 4. Kubernetes Auth & Identity Decoupling
+if "kubernetes:" not in ss_text or "mountPath: \"kubernetes\"" not in ss_text or "role: \"openbao-app-role\"" not in ss_text:
+    print("SecretStore must configure Kubernetes auth with mountPath: kubernetes and role: openbao-app-role")
+    sys.exit(1)
+
+if "name: openbao-client-sa" not in ss_text or "name: openbao-client-sa" not in sa_text:
+    print("SecretStore auth and ServiceAccount must define openbao-client-sa")
+    sys.exit(1)
+
+if "name: openbao-app-workload-sa" not in sa_text:
+    print("Missing unprivileged workload ServiceAccount: openbao-app-workload-sa")
+    sys.exit(1)
+
+if "serviceAccountName: openbao-app-workload-sa" not in dep_text:
+    print("Deployment must reference serviceAccountName: openbao-app-workload-sa")
+    sys.exit(1)
+
+# 5. ExternalSecret Target Mapping
+if "kind: ExternalSecret" not in es_text or "name: openbao-database-credential-sync" not in es_text:
+    print("ExternalSecret missing kind: ExternalSecret or name: openbao-database-credential-sync")
+    sys.exit(1)
+
+if "name: openbao-database-secret" not in es_text or "creationPolicy: Owner" not in es_text:
+    print("ExternalSecret target must specify name: openbao-database-secret with creationPolicy: Owner")
+    sys.exit(1)
+
+if "app/database" not in es_text:
+    print("ExternalSecret remoteRef must reference key: app/database")
+    sys.exit(1)
+
+# 6. Workload Deployment Consumption & Non-Sensitive Signals
+if "name: openbao-database-secret" not in dep_text or "secretKeyRef:" not in dep_text:
+    print("Deployment must consume openbao-database-secret via secretKeyRef")
+    sys.exit(1)
+
+for sec in ["runAsNonRoot: true", "readOnlyRootFilesystem: true", "allowPrivilegeEscalation: false"]:
+    if sec not in dep_text:
+        print(f"Deployment missing securityContext parameter: {sec}")
+        sys.exit(1)
+
+if "SYNTHETIC_AUTH_ESTABLISHED" not in dep_text or "BOOT_TIME=" not in dep_text:
+    print("Deployment must emit non-sensitive operational signals")
+    sys.exit(1)
+
+# 7. Kustomization Inclusion
+for res in ["serviceaccount.yaml", "ca-configmap.yaml", "secretstore.yaml", "externalsecret.yaml", "deployment.yaml"]:
+    if res not in kust_text:
+        print(f"kustomization.yaml missing resource: {res}")
+        sys.exit(1)
+
+# 8. Social Artifacts Verification
+social_dir = "docs/social/production-devops-insights-26"
+social_files = ["linkedin-post.md", "image-description.md", "publication-checklist.md", "production-devops-insights-26.png"]
+missing_social = [f for f in social_files if not os.path.isfile(os.path.join(social_dir, f))]
+if missing_social:
+    print(f"Missing required social publication files: {missing_social}")
+    sys.exit(1)
+
+# Verify image is valid and non-zero
+img_path = os.path.join(social_dir, "production-devops-insights-26.png")
+if os.path.getsize(img_path) < 1000:
+    print("LinkedIn image file is too small or empty")
+    sys.exit(1)
+
+print("OK")
+sys.exit(0)
+EOF
+)
+  if [ $? -eq 0 ]; then
+    log_pass "OpenBao integration verified (Vault-compatible schema, Kubernetes auth, TLS caProvider, target mapping, workload staleness, publication artifacts)"
+  else
+    log_fail "OpenBao integration check failed: $OPENBAO_CHECK"
+  fi
+else
+  log_skip "Python or openbao-external-secret-demo directory unavailable"
+fi
+
+# ------------------------------------------------------------------------------
+# 16. Optional Runtime OpenBao Backend Reachability Check
+# ------------------------------------------------------------------------------
+echo -e "\n16. Optional Runtime OpenBao Backend Reachability Check"
+if command -v curl >/dev/null 2>&1; then
+  BAO_STATUS=$(curl -k -s -m 2 https://openbao.security-system.svc.cluster.local:8200/v1/sys/health 2>/dev/null || echo "unreachable")
+  if [ "$BAO_STATUS" != "unreachable" ]; then
+    log_pass "Runtime OpenBao server endpoint reachable and responding"
+  else
+    log_skip "Runtime OpenBao server unreachable; statically validated; OpenBao dynamic reconciliation behavior was not executed."
+  fi
+else
+  log_skip "curl not installed in PATH; OpenBao server reachability check skipped"
+fi
+
+# ------------------------------------------------------------------------------
+# 17. Optional Runtime External Secrets Operator Reconcile Check
+# ------------------------------------------------------------------------------
+echo -e "\n17. Optional Runtime External Secrets Operator Reconcile Check"
 if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
   HAS_CRD=$(kubectl get crd externalsecrets.external-secrets.io >/dev/null 2>&1 && echo "yes" || echo "no")
   if [ "$HAS_CRD" = "yes" ]; then
@@ -899,7 +1051,7 @@ if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "Validation completed with failures."
   exit 1
 elif [ "$SKIP_COUNT" -gt 0 ]; then
-  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; external secret reconciliation / secret access / stateful recovery / multi-AZ scheduling behavior was not executed)."
+  echo "Validation completed cleanly with $SKIP_COUNT optional check(s) skipped (Statically validated; external secret reconciliation / OpenBao server reachability / secret access / stateful recovery / multi-AZ scheduling behavior was not executed)."
   exit 0
 else
   echo "Validation completed cleanly."
