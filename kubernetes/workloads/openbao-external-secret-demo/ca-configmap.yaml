@@ -1,0 +1,24 @@
+# ==============================================================================
+# ConfigMap: Synthetic OpenBao CA Certificate for TLS Verification
+# ==============================================================================
+# Safe placeholder CA bundle for verifying in-cluster TLS to OpenBao server.
+# NEVER commit private keys or production CA bundles containing private material.
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-ca-cert
+  namespace: sample-workloads
+  labels:
+    app.kubernetes.io/name: openbao-external-secret-demo
+    app.kubernetes.io/component: tls-trust-anchor
+    app.kubernetes.io/part-of: production-eks-platform
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIC+DCCAeCgAwIBAgIJANbH5T3yW8ZMMA0GCSqGSIb3DQEBCwUAMBMxETAPBgNV
+    BAMMCHBsYXRmb3JtMB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowEzER
+    MA8GA1UEAwwIcGxhdGZvcm0wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
+    AQDEbV4q92Kq3bV2vKq0uO1M1t+gN+5h7s0lT0aV2eM7e4L6j8v5r5G4q2V3w0A8
+    <SYNTHETIC_OPENBAO_CA_CERTIFICATE_PLACEHOLDER_ONLY>
+    -----END CERTIFICATE-----

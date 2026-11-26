@@ -53,6 +53,8 @@ Our platform design establishes clean boundaries between node-level control plan
   $$\text{Pod Replacement} \ne \text{State Recovery}$$
 - **[Secret Trust-Boundary & Delivery Flow Architecture](architecture/diagrams/secret-trust-boundary-flow.md)**: Visualizes the four system planes (control, storage, runtime, observability), contrasting least-privilege RBAC scoping against broad collection verbs, evaluating in-memory `tmpfs` volume projection vs. environment variables, and identifying downstream application leakage channels. Demonstrates the security principle:
   $$\text{Base64 Encoding} \ne \text{Secret Management}$$
+- **[External Secrets Trust-Boundary & Synchronization Flow](architecture/diagrams/external-secrets-trust-boundaries.md)**: Visualizes the end-to-end credential lifecycle from AWS Secrets Manager through External Secrets Operator (IRSA) into Kubernetes Secrets, contrasting environment variables, volume projections, and `subPath` mounts against running application memory adoption and downstream authentication. Demonstrates the reliability principle:
+  $$\text{Secret Synchronization} \ne \text{Application Credential Adoption}$$
 
 ---
 
@@ -94,6 +96,14 @@ Our platform design establishes clean boundaries between node-level control plan
 - **Safe Manifest Hygiene:** Rejects committed raw/Base64 credentials in Git, using synthetic placeholders (`<DEMO_SECRET_VALUE>`) in declarative manifests and documenting out-of-band imperative provisioning for local clusters.
 - **Production Kubernetes Manifests:** Configured in [`kubernetes/workloads/secret-demo/`](kubernetes/workloads/secret-demo/).
 
+### 6. External Secrets Management & Application Adoption Strategy
+- **External Secrets Operator (ESO) v0.9.11:** Declarative in-cluster reconciliation of cloud credentials using the `external-secrets.io/v1beta1` specification.
+- **Dual Independently Configured Backends:**
+  - **AWS Secrets Manager (Managed Cloud):** Configured via IRSA (`eso-irsa-sa`) in [`kubernetes/workloads/external-secret-demo/`](kubernetes/workloads/external-secret-demo/).
+  - **OpenBao (Self-Hosted OSS):** Configured via Kubernetes auth (`auth.kubernetes`) and TLS verification in [`kubernetes/workloads/openbao-external-secret-demo/`](kubernetes/workloads/openbao-external-secret-demo/).
+- **Controller vs. Workload Identity Decoupling:** Decouples credentials by assigning access exclusively to the controller, while application workloads possess zero cloud IAM or OpenBao permissions.
+- **Complete Delivery Plane Staleness Model:** Formally proves that updating Kubernetes Secrets does not mutate running process environment tables (`execve` boundary), updates directory volume mounts asynchronously, and never updates `subPath` volume mounts, requiring explicit deployment rollouts.
+
 ---
 
 ## Architecture Decision Records (ADR)
@@ -108,6 +118,8 @@ Our platform design establishes clean boundaries between node-level control plan
   Evaluates architectural trade-offs between stateless Deployments, shared network filesystems, and StatefulSets with volume claim templates; analyzes single-node mount semantics (`ReadWriteOnce`), storage topology binding modes (`Immediate` vs `WaitForFirstConsumer`), PVC retention vs PV reclaim policy boundaries, and failure isolation.
 - **[ADR-005: Kubernetes Secret Handling & Trust-Boundary Strategy](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md)**
   Evaluates native secret storage, Base64 representation limits, RBAC resource scoping, volume mount delivery vs environment variables, and rotation boundaries before external secret managers.
+- **[ADR-006: External Secrets Synchronization & Application Adoption Strategy](architecture/adr/ADR-006-external-secrets-adoption.md)**
+  Evaluates External Secrets Operator (ESO), AWS Secrets Manager integration, alternative backends (OpenBao, Vault), exclusion of Vaultwarden, EKS IRSA identity decoupling, namespaced SecretStores, and the distinction between secret synchronization and runtime application adoption.
 
 ---
 
@@ -144,6 +156,13 @@ Our platform design establishes clean boundaries between node-level control plan
   - **[Scenario 4: Secret Rotation Lifecycle Boundary](failure-scenarios/secrets/secret-rotation-lifecycle-boundary.md)**: Dissects the desynchronization trap between kubelet atomic filesystem symlink updates and application in-memory credential caching.
   - **[Hands-On Lab: Secret Security & Trust-Boundary Verification](failure-scenarios/secrets/secret-security-lab.md)**: Controlled step-by-step verification on a disposable cluster.
 
+### External Secrets Management (Milestone #26)
+- **[External Secrets Failure Scenarios & Validation](failure-scenarios/external-secrets/README.md)**:
+  - **[Scenario 1: Synchronization Succeeded, Application Stayed Stale](failure-scenarios/external-secrets/sync-success-app-stale.md)**: Diagnoses the environment variable and subPath delivery freeze where Kubernetes Secrets update in etcd but running processes retain stale boot-time credentials.
+  - **[Scenario 2: Provider Access Denied](failure-scenarios/external-secrets/provider-access-denied.md)**: Traces AWS STS IRSA OIDC trust mismatches, KMS key policy lockouts, and secret ARN scoping errors.
+  - **[Scenario 3: Premature Old-Credential Revocation](failure-scenarios/external-secrets/premature-revocation.md)**: Dissects the failure storm caused when an upstream datastore revokes old credentials before ESO synchronizes and workloads complete a rollout.
+  - **[Validation Evidence: Milestone #26 Security & Evidence Report](failure-scenarios/external-secrets/validation.md)**: Comprehensive evidence matrix covering static CRD schemas, IAM least privilege, zero credential logging, and regression checks.
+
 ---
 
 ## Operational Runbooks
@@ -163,6 +182,9 @@ Our platform design establishes clean boundaries between node-level control plan
 - **[Runbook: Secret Access, Mounting & Delivery Failure Investigation](runbooks/secret-access-and-delivery-failure.md)**
   Outside-in diagnostic hierarchy tracing credential failures:
   $$\text{Credential Failure} \longrightarrow \text{Workload Identity} \longrightarrow \text{Secret Object} \longrightarrow \text{RBAC Authorization} \longrightarrow \text{tmpfs Mount} \longrightarrow \text{File Mode 0400} \longrightarrow \text{Memory Freshness}$$
+- **[Runbook: External Secret Synchronization & Application Adoption Failure](runbooks/external-secret-sync-and-adoption-failure.md)**
+  Outside-in diagnostic hierarchy tracing external secret reconciliation and workload adoption:
+  $$\text{Downstream Auth Failure} \longrightarrow \text{Provider Secret Version} \longrightarrow \text{IRSA Authentication} \longrightarrow \text{SecretStore Ready} \longrightarrow \text{ExternalSecret Synced} \longrightarrow \text{Delivery Mechanism} \longrightarrow \text{Pod Restart} \longrightarrow \text{Downstream Verification}$$
 
 ---
 
@@ -184,6 +206,7 @@ This repository serves as the practical evidence layer for the LinkedIn series *
 | Milestone | Topic | Question / Scenario | Implementation Status | Technical Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | **#25** | Kubernetes Secrets — Base64 ≠ Secret Management | *"Who Can Retrieve the Credential, Where Does It Live, and Where Can It Leak?"* | **Implementation available** *(LinkedIn publication pending)* | [Workload Manifests](kubernetes/workloads/secret-demo/) • [ADR-005](architecture/adr/ADR-005-kubernetes-secret-handling-strategy.md) • [Secret Trust-Boundary Flow](architecture/diagrams/secret-trust-boundary-flow.md) • [Runbook](runbooks/secret-access-and-delivery-failure.md) • [Failure Scenarios](failure-scenarios/secrets/) • [Validation Evidence](failure-scenarios/secrets/validation.md) |
+| **#26** | External Secrets Management — Sync ≠ Adoption | *"If External Secrets Operator Synced the New Secret, Why Is the App Still Failing?"* | **Implementation available** *(LinkedIn publication pending)* | [AWS Manifests](kubernetes/workloads/external-secret-demo/) • [OpenBao Manifests](kubernetes/workloads/openbao-external-secret-demo/) • [ADR-006](architecture/adr/ADR-006-external-secrets-adoption.md) • [External Secrets Architecture](architecture/diagrams/external-secrets-trust-boundaries.md) • [Runbook](runbooks/external-secret-sync-and-adoption-failure.md) • [Failure Scenarios](failure-scenarios/external-secrets/) • [Validation Evidence](failure-scenarios/external-secrets/validation.md) |
 
 ---
 
